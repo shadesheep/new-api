@@ -1,9 +1,12 @@
 package router
 
 import (
+	"bytes"
 	"embed"
+	"html"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
@@ -16,6 +19,33 @@ import (
 type WebAssets struct {
 	BuildFS   embed.FS
 	IndexPage []byte
+}
+
+// indexPageRender is the embedded index.html with the configured system name
+// rendered into the title, cached for the name it was built from.
+type indexPageRender struct {
+	name string
+	body []byte
+}
+
+var renderedIndexPage atomic.Value // stores indexPageRender
+
+// serveIndexPage writes the embedded index.html with the build-time
+// "New API" title replaced by the configured system name, so the browser tab
+// shows the site branding immediately instead of flashing "New API" until the
+// frontend status request completes. The render is redone only when the
+// system name changes.
+func serveIndexPage(c *gin.Context, raw []byte) {
+	name := common.SystemName
+	if cached, ok := renderedIndexPage.Load().(indexPageRender); ok && cached.name == name {
+		c.Data(http.StatusOK, "text/html; charset=utf-8", cached.body)
+		return
+	}
+	escaped := html.EscapeString(name)
+	body := bytes.Replace(raw, []byte("<title>New API</title>"), []byte("<title>"+escaped+"</title>"), 1)
+	body = bytes.Replace(body, []byte(`<meta name="title" content="New API" />`), []byte(`<meta name="title" content="`+escaped+`" />`), 1)
+	renderedIndexPage.Store(indexPageRender{name: name, body: body})
+	c.Data(http.StatusOK, "text/html; charset=utf-8", body)
 }
 
 func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.HandlerFunc) {
@@ -41,7 +71,7 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 				return
 			}
 			c.Header("Cache-Control", "no-cache")
-			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
+			serveIndexPage(c, assets.IndexPage)
 		},
 	)
 }
