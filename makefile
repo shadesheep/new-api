@@ -132,7 +132,8 @@ SSH := ssh -p $(SERVER_PORT)
 SCP := scp -P $(SERVER_PORT)
 
 .PHONY: help deploy deploy-upstream docker-build docker-run server-setup server-init prod-build prod-upload prod-run \
-	docker-logs docker-stop docker-restart docker-status docker-clean test-connection
+	docker-logs docker-stop docker-restart docker-status docker-clean test-connection \
+	db-backup-remote-setup db-backup-remote db-backup-cron
 
 ## 显示部署命令帮助
 help:
@@ -306,3 +307,34 @@ endif
 test-connection:
 	@printf "$(YELLOW)>>> 测试连接 $(SERVER_USER)@$(SERVER_HOST)...$(NC)\n"
 	$(SSH) $(SERVER_USER)@$(SERVER_HOST) "echo '>>> 连接成功' && uname -m && (docker --version || echo 'Docker 未安装, 请先执行 make server-init ENV=prod')"
+
+# ==================== 异地备份 ====================
+# 异地备份目标服务器（可经 env/<ENV>/.env 或命令行覆盖）
+BACKUP_HOST ?= 139.224.65.205
+BACKUP_PORT ?= 52222
+BACKUP_USER ?= root
+BACKUP_REMOTE_DIR ?= /app/remote-backups/new-api
+BACKUP_KEEP_DAYS ?= 7
+BACKUP_CRON_EXP ?= 0 2 * * *
+
+# 上传备份脚本到服务器（幂等，每次同步最新版本）
+.PHONY: db-backup-remote-setup
+db-backup-remote-setup:
+	$(SSH) $(SERVER_USER)@$(SERVER_HOST) "mkdir -p $(APP_BASE)/scripts"
+	$(SCP) deploy/backup-pg-remote.sh $(SERVER_USER)@$(SERVER_HOST):$(APP_BASE)/scripts/backup-pg-remote.sh
+	$(SSH) $(SERVER_USER)@$(SERVER_HOST) "chmod +x $(APP_BASE)/scripts/backup-pg-remote.sh"
+
+## (prod) 手动执行一次异地备份（pg_dump -> 本地留存 -> scp 到 $(BACKUP_HOST)，保留 $(BACKUP_KEEP_DAYS) 天）
+.PHONY: db-backup-remote
+db-backup-remote: db-backup-remote-setup
+	$(SSH) $(SERVER_USER)@$(SERVER_HOST) "APP_BASE=$(APP_BASE) BACKUP_HOST=$(BACKUP_HOST) BACKUP_PORT=$(BACKUP_PORT) BACKUP_USER=$(BACKUP_USER) REMOTE_DIR=$(BACKUP_REMOTE_DIR) KEEP_DAYS=$(BACKUP_KEEP_DAYS) $(APP_BASE)/scripts/backup-pg-remote.sh"
+
+## (prod) 安装每日 02:00 异地备份定时任务（幂等，重复执行只更新配置）
+.PHONY: db-backup-cron
+db-backup-cron: db-backup-remote-setup
+	$(SSH) $(SERVER_USER)@$(SERVER_HOST) "command -v crontab >/dev/null 2>&1 || { dnf install -y cronie && systemctl enable --now crond; }; \
+		marker='$(APP_BASE)/scripts/backup-pg-remote.sh'; \
+		(crontab -l 2>/dev/null | grep -vF \"\$$marker\"; \
+		echo '$(BACKUP_CRON_EXP) APP_BASE=$(APP_BASE) BACKUP_HOST=$(BACKUP_HOST) BACKUP_PORT=$(BACKUP_PORT) BACKUP_USER=$(BACKUP_USER) REMOTE_DIR=$(BACKUP_REMOTE_DIR) KEEP_DAYS=$(BACKUP_KEEP_DAYS) '"\$$marker"' >> $(APP_BASE)/backups/backup-cron.log 2>&1') | crontab -; \
+		crontab -l | grep -F \"\$$marker\""
+	@printf "$(GREEN)>>> 定时备份已安装: $(BACKUP_CRON_EXP) -> $(BACKUP_HOST)$(NC)\n"
