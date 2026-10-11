@@ -10,7 +10,8 @@ services:
     command: --log-dir /app/logs
     ports:
       # 过渡期默认绑定 0.0.0.0 (A 服务器 nginx 兜底反代仍直连此端口);
-      # DNS 切到本机后在服务器 .env 设置 API_BIND_ADDR=127.0.0.1, 仅经本机 nginx 暴露
+      # 防爆破: 对外端口用 PROD_PORT 改非标端口 (生产 13000), 容器内仍是 3000;
+      # DNS 切到本机后在服务器 deploy.env 设置 API_BIND_ADDR=127.0.0.1, 仅经本机 nginx 暴露
       - "${API_BIND_ADDR:-0.0.0.0}:${PROD_PORT:-3000}:3000"
     volumes:
       - ${APP_BASE:-/app/new-api}/data:/data
@@ -102,8 +103,10 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     ports:
-      # 同 redis, 默认仅回环, DB_BIND_ADDR=0.0.0.0 可放开
-      - "${DB_BIND_ADDR:-127.0.0.1}:5432:5432"
+      # Postgres 运维直连:默认仅回环;
+      # 对外暴露时在 deploy.env 设 POSTGRES_BIND_ADDR=0.0.0.0 + POSTGRES_PUBLIC_PORT 非标端口
+      # (生产 15432,防爆破,参照 call-it-a-day MYSQL_PUBLIC_PORT=13306;务必配合安全组放行)
+      - "${POSTGRES_BIND_ADDR:-127.0.0.1}:${POSTGRES_PUBLIC_PORT:-5432}:5432"
     networks:
       - new-api-network
     healthcheck:

@@ -19,7 +19,10 @@ NC := \e[0m
 
 # 传递给 docker compose 的替换变量 (compose 还会自动读取 .env 里的密钥)
 # 注意必须用 = 延迟展开, deploy-upstream 的目标特定 IMAGE/VERSION 才能生效
-COMPOSE_ENV = IMAGE=$(IMAGE) VERSION=$(VERSION) APP_BASE=$(APP_BASE) PROD_PORT=$(PORT)
+# 端口/绑定地址来自 deploy.env (make server-setup 上传), 不传则取 compose 里的安全默认值
+COMPOSE_ENV = IMAGE=$(IMAGE) VERSION=$(VERSION) APP_BASE=$(APP_BASE) PROD_PORT=$(PORT) \
+	API_BIND_ADDR=$(API_BIND_ADDR) DB_BIND_ADDR=$(DB_BIND_ADDR) \
+	POSTGRES_BIND_ADDR=$(POSTGRES_BIND_ADDR) POSTGRES_PUBLIC_PORT=$(POSTGRES_PUBLIC_PORT)
 
 .PHONY: help init secrets deploy deploy-upstream logs stop restart nginx-reload status versions clean db-shell redis-shell
 
