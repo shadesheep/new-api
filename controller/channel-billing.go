@@ -444,9 +444,12 @@ type kimiCodingPlanWindow struct {
 }
 
 // kimiCodingPlanUsageResponse models the subset of the Kimi For Coding plan
-// usage endpoint (GET {base}/v1/usages) needed for balance tracking.
+// usage endpoint (GET {base}/v1/usages) needed for balance tracking. Some
+// deployments omit "remaining" and only report "limit" and "used".
 type kimiCodingPlanUsageResponse struct {
 	Usage struct {
+		Limit     string `json:"limit"`
+		Used      string `json:"used"`
 		Remaining string `json:"remaining"`
 	} `json:"usage"`
 	Usages struct {
@@ -458,26 +461,37 @@ type kimiCodingPlanUsageResponse struct {
 // getKimiCodingPlanBalance extracts the weekly remaining quota and the quota
 // windows from a Kimi For Coding plan usage response. matched is false when
 // the body does not have the Kimi plan usage shape, in which case the caller
-// falls back to raw display. Only the weekly window maps to channel balance
-// semantics: the five-hour window resets too quickly to drive balance-based
-// auto-ban.
+// falls back to raw display. When "remaining" is absent but "limit" and "used"
+// are present, the remaining quota is derived as limit-used, clamped at zero
+// so an overused plan reads as exhausted. Only the weekly window maps to
+// channel balance semantics: the five-hour window resets too quickly to drive
+// balance-based auto-ban.
 func getKimiCodingPlanBalance(body []byte) (balance float64, planUsage *ChannelPlanUsage, matched bool, err error) {
 	var response kimiCodingPlanUsageResponse
 	if err := common.Unmarshal(body, &response); err != nil {
 		return 0, nil, false, nil
 	}
-	if response.Usage.Remaining == "" || response.Usages.Limit7d == nil {
+	if response.Usages.Limit7d == nil {
 		return 0, nil, false, nil
 	}
-	balance, err = strconv.ParseFloat(response.Usage.Remaining, 64)
-	if err != nil {
-		return 0, nil, true, err
-	}
-	if math.IsNaN(balance) || math.IsInf(balance, 0) {
-		return 0, nil, true, errors.New("kimi coding plan weekly remaining must be finite")
-	}
-	if balance < 0 {
-		return 0, nil, true, errors.New("kimi coding plan weekly remaining must be non-negative")
+	switch {
+	case response.Usage.Remaining != "":
+		balance, err = parseKimiPlanQuotaField(response.Usage.Remaining, "weekly remaining")
+		if err != nil {
+			return 0, nil, true, err
+		}
+	case response.Usage.Limit != "" && response.Usage.Used != "":
+		limit, err := parseKimiPlanQuotaField(response.Usage.Limit, "weekly limit")
+		if err != nil {
+			return 0, nil, true, err
+		}
+		used, err := parseKimiPlanQuotaField(response.Usage.Used, "weekly used")
+		if err != nil {
+			return 0, nil, true, err
+		}
+		balance = max(limit-used, 0)
+	default:
+		return 0, nil, false, nil
 	}
 
 	planUsage = &ChannelPlanUsage{}
@@ -494,6 +508,22 @@ func getKimiCodingPlanBalance(body []byte) (balance float64, planUsage *ChannelP
 	}
 	planUsage.Weekly = &ChannelPlanWindowUsage{UsedPercent: percent, ResetTime: response.Usages.Limit7d.ResetTime}
 	return balance, planUsage, true, nil
+}
+
+// parseKimiPlanQuotaField parses a string-encoded quota field of the Kimi
+// plan usage response and validates it as a finite, non-negative number.
+func parseKimiPlanQuotaField(value string, field string) (float64, error) {
+	quota, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(quota) || math.IsInf(quota, 0) {
+		return 0, fmt.Errorf("kimi coding plan %s must be finite", field)
+	}
+	if quota < 0 {
+		return 0, fmt.Errorf("kimi coding plan %s must be non-negative", field)
+	}
+	return quota, nil
 }
 
 func kimiPlanWindowUsedPercent(window *kimiCodingPlanWindow) (float64, error) {

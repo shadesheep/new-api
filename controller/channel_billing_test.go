@@ -150,6 +150,34 @@ func TestGetKimiCodingPlanBalance(t *testing.T) {
 			wantWeeklyReset:   "2026-09-29T01:16:59Z",
 		},
 		{
+			name: "derives remaining from limit and used when remaining is absent",
+			responseJSON: `{
+				"usage": {"limit": "100", "used": "100", "resetTime": "2026-10-15T03:24:56.392065Z"},
+				"limits": [{"window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"}, "detail": {"limit": "100", "used": "6", "remaining": "94", "resetTime": "2026-10-13T08:24:56.392065Z"}}],
+				"usages": {"limit_5h": {"used_ratio": 0.0633, "reset_time": "2026-10-13T08:24:55Z"}, "limit_7d": {"used_ratio": 1, "reset_time": "2026-10-15T03:24:56Z"}}
+			}`,
+			want:                0,
+			wantMatched:         true,
+			wantFiveHourPercent: common.GetPointer(6.33),
+			wantFiveHourReset:   "2026-10-13T08:24:55Z",
+			wantWeeklyPercent:   100,
+			wantWeeklyReset:     "2026-10-15T03:24:56Z",
+		},
+		{
+			name:              "clamps derived remaining at zero when used exceeds limit",
+			responseJSON:      `{"usage": {"limit": "100", "used": "120"}, "usages": {"limit_7d": {"used_ratio": 1.2, "reset_time": "2026-09-29T01:16:59Z"}}}`,
+			want:              0,
+			wantMatched:       true,
+			wantWeeklyPercent: 120,
+			wantWeeklyReset:   "2026-09-29T01:16:59Z",
+		},
+		{
+			name:            "returns parse error for non-numeric limit without remaining",
+			responseJSON:    `{"usage": {"limit": "abc", "used": "35"}, "usages": {"limit_7d": {"used_ratio": 0.35}}}`,
+			wantMatched:     true,
+			wantErrContains: "invalid syntax",
+		},
+		{
 			name:         "does not match when weekly ratio is absent",
 			responseJSON: `{"usage": {"limit": "100", "remaining": "65"}, "usages": {"limit_5h": {"used_ratio": 0.1}}}`,
 			wantMatched:  false,
