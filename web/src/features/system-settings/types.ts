@@ -457,6 +457,7 @@ export type UpstreamConfig = {
   name: string
   base_url: string
   endpoint: string
+  token?: string
 }
 
 export type FetchUpstreamRatiosRequest = {

@@ -43,6 +43,10 @@ const (
 	modelsDevHost               = "models.dev"
 	modelsDevPath               = "/api.json"
 	modelsDevInputCostRatioBase = 1000.0
+	modelPlazaEndpoint          = "model-plaza"
+	modelPlazaPath              = "/api/v1/model-plaza"
+	modelPlazaSellSuffix        = "|sell"
+	modelPlazaOfficialSuffix    = "|official"
 )
 
 func nearlyEqual(a, b float64) bool {
@@ -261,7 +265,10 @@ func FetchUpstreamRatios(c *gin.Context) {
 	}
 
 	var wg sync.WaitGroup
-	ch := make(chan upstreamResult, len(upstreams))
+	// A model-plaza upstream emits two results (sell + official columns), so
+	// size the buffer for the worst case: sends must never block, because the
+	// collector below only drains the channel after wg.Wait().
+	ch := make(chan upstreamResult, 2*len(upstreams))
 
 	sem := make(chan struct{}, maxConcurrentFetches)
 
@@ -295,11 +302,14 @@ func FetchUpstreamRatios(c *gin.Context) {
 			defer func() { <-sem }()
 
 			isOpenRouter := chItem.Endpoint == "openrouter"
+			isModelPlaza := chItem.Endpoint == modelPlazaEndpoint
 
 			endpoint := chItem.Endpoint
 			var fullURL string
 			if isOpenRouter {
 				fullURL = chItem.BaseURL + "/v1/models"
+			} else if isModelPlaza {
+				fullURL = chItem.BaseURL + modelPlazaPath
 			} else if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
 				fullURL = endpoint
 			} else {
@@ -347,6 +357,28 @@ func FetchUpstreamRatios(c *gin.Context) {
 			} else if isOpenRouter {
 				ch <- upstreamResult{Name: uniqueName, Err: "OpenRouter requires a valid channel with API key"}
 				return
+			}
+
+			// model-plaza is an authenticated dashboard API: an explicit token
+			// wins, otherwise fall back to the channel key when available.
+			if isModelPlaza {
+				token := strings.TrimSpace(chItem.Token)
+				if token == "" && chItem.ID != 0 {
+					dbCh, err := model.GetChannelById(chItem.ID, true)
+					if err != nil {
+						ch <- upstreamResult{Name: uniqueName, Err: "failed to get channel key: " + err.Error()}
+						return
+					}
+					key, _, apiErr := dbCh.GetNextEnabledKey()
+					if apiErr != nil {
+						ch <- upstreamResult{Name: uniqueName, Err: "failed to get enabled channel key: " + apiErr.Error()}
+						return
+					}
+					token = strings.TrimSpace(key)
+				}
+				if token != "" {
+					httpReq.Header.Set("Authorization", "Bearer "+token)
+				}
 			}
 
 			// 简单重试：最多 3 次，指数退避
@@ -404,6 +436,28 @@ func FetchUpstreamRatios(c *gin.Context) {
 					return
 				}
 				ch <- upstreamResult{Name: uniqueName, Data: converted}
+				return
+			}
+
+			// type5: model-plaza -> one source yields two upstream columns:
+			// the site's selling prices and the official list prices.
+			if isModelPlaza {
+				sell, official, err := convertModelPlazaToRatioData(bytes.NewReader(bodyBytes))
+				if err != nil {
+					logger.LogWarn(c.Request.Context(), common.LogText("model-plaza parse failed from %s: %s", chItem.Name, err.Error()))
+					ch <- upstreamResult{Name: uniqueName, Err: err.Error()}
+					return
+				}
+				if len(sell) == 0 && len(official) == 0 {
+					ch <- upstreamResult{Name: uniqueName, Err: "no pricing entries found in model-plaza response"}
+					return
+				}
+				if len(sell) > 0 {
+					ch <- upstreamResult{Name: uniqueName + modelPlazaSellSuffix, Data: sell}
+				}
+				if len(official) > 0 {
+					ch <- upstreamResult{Name: uniqueName + modelPlazaOfficialSuffix, Data: official}
+				}
 				return
 			}
 
@@ -1102,6 +1156,147 @@ func convertModelsDevToRatioData(reader io.Reader) (map[string]any, error) {
 		converted["cache_ratio"] = cacheRatioMap
 	}
 	return converted, nil
+}
+
+type modelPlazaPrice struct {
+	BillingMode     string   `json:"billing_mode"`
+	InputPrice      *float64 `json:"input_price"`
+	OutputPrice     *float64 `json:"output_price"`
+	CacheWritePrice *float64 `json:"cache_write_price"`
+	CacheReadPrice  *float64 `json:"cache_read_price"`
+	PerRequestPrice *float64 `json:"per_request_price"`
+}
+
+type modelPlazaModel struct {
+	Name            string           `json:"name"`
+	Pricing         *modelPlazaPrice `json:"pricing"`
+	OfficialPricing *modelPlazaPrice `json:"official_pricing"`
+}
+
+type modelPlazaGroup struct {
+	Models []modelPlazaModel `json:"models"`
+}
+
+// convertModelPlazaToRatioData parses a model-plaza response
+// (<base>/api/v1/model-plaza) and converts per-token USD prices into the
+// local ratio format, once for the site's selling prices (pricing) and once
+// for the official list prices (official_pricing). The conversion mirrors the
+// OpenRouter one: model_ratio = input price per token * 1000 * USD, the other
+// ratios are relative to the input price. Models offered by several groups
+// keep the cheapest non-zero input price, matching the models.dev policy.
+func convertModelPlazaToRatioData(reader io.Reader) (map[string]any, map[string]any, error) {
+	var plaza struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Groups []modelPlazaGroup `json:"groups"`
+		} `json:"data"`
+	}
+	if err := common.DecodeJson(reader, &plaza); err != nil {
+		return nil, nil, fmt.Errorf("failed to decode model-plaza response: %w", err)
+	}
+	if plaza.Code != 0 {
+		return nil, nil, fmt.Errorf("model-plaza returned code %d: %s", plaza.Code, plaza.Message)
+	}
+	sell := modelPlazaPricesToRatioData(pickModelPlazaPrices(plaza.Data.Groups, false))
+	official := modelPlazaPricesToRatioData(pickModelPlazaPrices(plaza.Data.Groups, true))
+	return sell, official, nil
+}
+
+// pickModelPlazaPrices flattens all groups into one model -> price map.
+// official selects official_pricing instead of the site's selling pricing.
+func pickModelPlazaPrices(groups []modelPlazaGroup, official bool) map[string]*modelPlazaPrice {
+	picked := make(map[string]*modelPlazaPrice)
+	for _, group := range groups {
+		for _, item := range group.Models {
+			if item.Name == "" {
+				continue
+			}
+			price := item.Pricing
+			if official {
+				price = item.OfficialPricing
+			}
+			if price == nil {
+				continue
+			}
+			current, exists := picked[item.Name]
+			if !exists || preferModelPlazaPrice(current, price) {
+				picked[item.Name] = price
+			}
+		}
+	}
+	return picked
+}
+
+// preferModelPlazaPrice reports whether next replaces current: a non-zero
+// input price always wins over a zero one, otherwise the cheaper input wins.
+func preferModelPlazaPrice(current, next *modelPlazaPrice) bool {
+	currentInput := lo.FromPtr(current.InputPrice)
+	nextInput := lo.FromPtr(next.InputPrice)
+	if (currentInput > 0) != (nextInput > 0) {
+		return nextInput > 0
+	}
+	if nextInput > 0 && !nearlyEqual(nextInput, currentInput) {
+		return nextInput < currentInput
+	}
+	return false
+}
+
+func modelPlazaPricesToRatioData(prices map[string]*modelPlazaPrice) map[string]any {
+	modelRatioMap := make(map[string]any)
+	completionRatioMap := make(map[string]any)
+	cacheRatioMap := make(map[string]any)
+	createCacheRatioMap := make(map[string]any)
+	modelPriceMap := make(map[string]any)
+
+	for name, price := range prices {
+		if price.BillingMode != "" && price.BillingMode != "token" {
+			if perRequest := price.PerRequestPrice; perRequest != nil && isValidNonNegativeCost(*perRequest) {
+				modelPriceMap[name] = *perRequest
+			}
+			continue
+		}
+		input := lo.FromPtr(price.InputPrice)
+		output := lo.FromPtr(price.OutputPrice)
+		if !isValidNonNegativeCost(input) || !isValidNonNegativeCost(output) {
+			continue
+		}
+		if input == 0 && output > 0 {
+			// No input baseline: cannot derive ratios safely.
+			continue
+		}
+		if input == 0 {
+			// Free model.
+			modelRatioMap[name] = 0.0
+			continue
+		}
+		modelRatioMap[name] = roundRatioValue(input * 1000 * ratio_setting.USD)
+		completionRatioMap[name] = roundRatioValue(output / input)
+		if price.CacheReadPrice != nil && isValidNonNegativeCost(*price.CacheReadPrice) {
+			cacheRatioMap[name] = roundRatioValue(*price.CacheReadPrice / input)
+		}
+		if price.CacheWritePrice != nil && isValidNonNegativeCost(*price.CacheWritePrice) {
+			createCacheRatioMap[name] = roundRatioValue(*price.CacheWritePrice / input)
+		}
+	}
+
+	converted := make(map[string]any)
+	if len(modelRatioMap) > 0 {
+		converted["model_ratio"] = modelRatioMap
+	}
+	if len(completionRatioMap) > 0 {
+		converted["completion_ratio"] = completionRatioMap
+	}
+	if len(cacheRatioMap) > 0 {
+		converted["cache_ratio"] = cacheRatioMap
+	}
+	if len(createCacheRatioMap) > 0 {
+		converted["create_cache_ratio"] = createCacheRatioMap
+	}
+	if len(modelPriceMap) > 0 {
+		converted["model_price"] = modelPriceMap
+	}
+	return converted
 }
 
 func GetSyncableChannels(c *gin.Context) {

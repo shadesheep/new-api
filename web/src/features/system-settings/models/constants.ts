@@ -47,10 +47,18 @@ export const OPENROUTER_ENDPOINT = 'openrouter'
 // Backend channel type for OpenRouter (see constant/channel.go: ChannelTypeOpenRouter = 20)
 export const OPENROUTER_CHANNEL_TYPE = 20
 
+// model-plaza upstream (a new-api style site's /api/v1/model-plaza). The
+// backend splits one plaza source into two upstream columns; these suffixes
+// are wire-protocol markers appended to the column name, do NOT translate.
+export const MODEL_PLAZA_ENDPOINT = 'model-plaza'
+export const MODEL_PLAZA_SELL_SUFFIX = '|sell'
+export const MODEL_PLAZA_OFFICIAL_SUFFIX = '|official'
+
 export const ENDPOINT_OPTIONS = [
   { label: 'pricing', value: '/api/pricing' },
   { label: 'ratio_config', value: '/api/ratio_config' },
   { label: 'OpenRouter', value: OPENROUTER_ENDPOINT },
+  { label: MODEL_PLAZA_ENDPOINT, value: MODEL_PLAZA_ENDPOINT },
   { label: 'custom', value: 'custom' },
 ] as const
 

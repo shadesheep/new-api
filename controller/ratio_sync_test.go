@@ -1,6 +1,9 @@
 package controller
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,8 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"net/http"
-	"net/http/httptest"
 )
 
 func TestPricingSyncExpressionPriority(t *testing.T) {
@@ -139,4 +140,124 @@ func TestPricingSyncCompleteSourcesAndArrayFormats(t *testing.T) {
 	assert.Equal(t, float64(4), response.Data.Prices["sync-token"].Upstreams["Expressions(1)"]["completion_ratio"])
 	assert.Equal(t, float64(0), response.Data.Prices["sync-token"].Upstreams["Expressions(1)"]["cache_ratio"])
 	assert.Equal(t, float64(0), response.Data.Prices["sync-free"].Upstreams["Legacy(2)"]["model_ratio"])
+}
+
+func TestConvertModelPlazaToRatioData(t *testing.T) {
+	payload := `{
+		"code": 0,
+		"message": "success",
+		"data": {
+			"groups": [
+				{
+					"id": 1,
+					"name": "pro",
+					"models": [
+						{"name": "plaza-pro", "pricing": {"billing_mode": "token", "input_price": 0.000002, "output_price": 0.00001, "cache_write_price": 2.5e-7, "cache_read_price": 2e-7},
+						 "official_pricing": {"input_price": 0.000004, "output_price": 0.000016, "cache_write_price": 5e-7, "cache_read_price": 4e-7}},
+						{"name": "plaza-free", "pricing": {"billing_mode": "token", "input_price": 0, "output_price": 0}, "official_pricing": null},
+						{"name": "plaza-no-pricing", "pricing": null, "official_pricing": null},
+						{"name": "plaza-request", "pricing": {"billing_mode": "per_request", "per_request_price": 0.05}, "official_pricing": null},
+						{"name": "plaza-zero-cache", "pricing": {"billing_mode": "token", "input_price": 0.000008, "output_price": 0.000028, "cache_write_price": 0, "cache_read_price": 0.000002}, "official_pricing": null}
+					]
+				},
+				{
+					"id": 2,
+					"name": "enterprise",
+					"models": [
+						{"name": "plaza-pro", "pricing": {"billing_mode": "token", "input_price": 0.00001, "output_price": 0.00005},
+						 "official_pricing": {"input_price": 0.000004, "output_price": 0.000016, "cache_write_price": 5e-7, "cache_read_price": 4e-7}},
+						{"name": "plaza-skip", "pricing": {"billing_mode": "token", "input_price": 0, "output_price": 0.00003}, "official_pricing": null},
+						{"name": "plaza-negative", "pricing": {"billing_mode": "token", "input_price": -1, "output_price": 1}, "official_pricing": null}
+					]
+				}
+			]
+		}
+	}`
+
+	sell, official, err := convertModelPlazaToRatioData(strings.NewReader(payload))
+	require.NoError(t, err)
+
+	// Selling prices: 1 ratio unit = $0.002/1K tokens, so $2/M -> 1.
+	assert.Equal(t, 1.0, sell["model_ratio"].(map[string]any)["plaza-pro"], "cheapest non-zero input price wins across groups")
+	assert.Equal(t, 5.0, sell["completion_ratio"].(map[string]any)["plaza-pro"])
+	assert.Equal(t, 0.1, sell["cache_ratio"].(map[string]any)["plaza-pro"])
+	assert.Equal(t, 0.125, sell["create_cache_ratio"].(map[string]any)["plaza-pro"])
+	assert.Equal(t, 0.0, sell["model_ratio"].(map[string]any)["plaza-free"])
+	assert.Equal(t, 0.05, sell["model_price"].(map[string]any)["plaza-request"])
+	assert.Equal(t, 0.0, sell["create_cache_ratio"].(map[string]any)["plaza-zero-cache"], "explicit zero cache write is preserved")
+	for _, model := range []string{"plaza-no-pricing", "plaza-skip", "plaza-negative"} {
+		assert.NotContains(t, sell["model_ratio"], model)
+	}
+
+	// Official prices use the official_pricing column.
+	assert.Equal(t, 2.0, official["model_ratio"].(map[string]any)["plaza-pro"])
+	assert.Equal(t, 4.0, official["completion_ratio"].(map[string]any)["plaza-pro"])
+	assert.NotContains(t, official["model_ratio"], "plaza-free", "models without official pricing are absent")
+
+	_, _, err = convertModelPlazaToRatioData(strings.NewReader(`{"code": 401, "message": "unauthorized"}`))
+	require.Error(t, err)
+	_, _, err = convertModelPlazaToRatioData(strings.NewReader(`not json`))
+	require.Error(t, err)
+}
+
+func TestModelPlazaSync(t *testing.T) {
+	plazaPayload := map[string]any{
+		"code":    0,
+		"message": "success",
+		"data": map[string]any{
+			"groups": []map[string]any{
+				{
+					"id":   5,
+					"name": "pro",
+					"models": []map[string]any{
+						{"name": "plaza-token", "pricing": map[string]any{"billing_mode": "token", "input_price": 0.000002, "output_price": 0.00001, "cache_read_price": 2e-7},
+							"official_pricing": map[string]any{"input_price": 0.000004, "output_price": 0.000016}},
+					},
+				},
+			},
+		},
+	}
+	var gotAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/model-plaza", r.URL.Path)
+		gotAuthorization = r.Header.Get("Authorization")
+		encoded, err := common.Marshal(plazaPayload)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(encoded)
+	}))
+	defer server.Close()
+
+	var response struct {
+		Success bool
+		Data    struct {
+			Differences map[string]map[string]dto.DifferenceItem
+			Prices      map[string]struct {
+				Current   map[string]any
+				Upstreams map[string]map[string]any
+			}
+			TestResults []dto.TestResult `json:"test_results"`
+		}
+	}
+	body := map[string]any{"upstreams": []map[string]any{
+		{"name": "Plaza", "base_url": server.URL, "endpoint": "model-plaza", "token": "test-plaza-token"},
+	}}
+	recorder := modelManagementRequest(t, FetchUpstreamRatios, http.MethodPost, "/api/channel/fetch_upstream_ratios", body, &response)
+	require.True(t, response.Success, recorder.Body.String())
+	assert.Equal(t, "Bearer test-plaza-token", gotAuthorization)
+
+	names := make([]string, 0, len(response.Data.TestResults))
+	for _, result := range response.Data.TestResults {
+		require.Equal(t, "success", result.Status, result.Error)
+		names = append(names, result.Name)
+	}
+	assert.ElementsMatch(t, []string{"Plaza|sell", "Plaza|official"}, names)
+
+	require.Contains(t, response.Data.Prices, "plaza-token")
+	upstreams := response.Data.Prices["plaza-token"].Upstreams
+	assert.Equal(t, float64(1), upstreams["Plaza|sell"]["model_ratio"])
+	assert.Equal(t, float64(5), upstreams["Plaza|sell"]["completion_ratio"])
+	assert.Equal(t, 0.1, upstreams["Plaza|sell"]["cache_ratio"])
+	assert.Equal(t, float64(2), upstreams["Plaza|official"]["model_ratio"])
+	assert.Equal(t, float64(4), upstreams["Plaza|official"]["completion_ratio"])
 }

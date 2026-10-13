@@ -86,6 +86,7 @@ export function UpstreamRatioSync() {
   const [channelEndpoints, setChannelEndpoints] = useState<
     Record<number, string>
   >({})
+  const [channelTokens, setChannelTokens] = useState<Record<number, string>>({})
   const [differences, setDifferences] = useState<DifferencesMap>({})
   const [prices, setPrices] = useState<PricingSyncModels>({})
   const [selectedSources, setSelectedSources] =
@@ -219,6 +220,7 @@ export function UpstreamRatioSync() {
       base_url: channel.base_url,
       endpoint:
         channelEndpoints[channel.id] || getDefaultEndpointForChannel(channel),
+      token: channelTokens[channel.id] || undefined,
     }))
     setLoadingBaseline(true)
     setPrices({})
@@ -357,6 +359,8 @@ export function UpstreamRatioSync() {
         onSelectedChannelIdsChange={setSelectedChannelIds}
         channelEndpoints={channelEndpoints}
         onChannelEndpointsChange={setChannelEndpoints}
+        channelTokens={channelTokens}
+        onChannelTokensChange={setChannelTokens}
         onConfirm={handleConfirmChannelSelection}
       />
       <ConflictConfirmDialog
