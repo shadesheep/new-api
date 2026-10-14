@@ -1,99 +1,15 @@
-# new-api 生产环境 Docker Compose 配置
+# new-api 生产环境 Docker Compose 配置 (现役 139.224.65.205, 2026-10-13 自 47.101.60.138 迁入)
 # 由本地 make server-setup ENV=prod 上传到服务器 $(APP_BASE)/docker-compose.yml
-# 密钥从同目录 .env 读取 (make secrets 生成, 不会提交/覆盖)
-# 镜像版本由 make deploy VERSION=<git-tag> 指定
+# 密钥从同目录 .env 读取 (服务器侧 make secrets 生成, 不上传不覆盖)
+# 镜像 tag 由 make deploy VERSION=<git-commit> 注入(COMPOSE_ENV), 不带变量手工 up -d 时回落到上次部署 tag
+#
+# 与旧 138 版模板的差异 (对齐 139 实况, 2026-10-14 回流):
+#   - 不自带 nginx/redis/exit-proxy: 入口复用同机 /app/call-it-a-day 项目的 nginx-server,
+#     缓存复用其 pool-redis (db2); 本 compose 只管理 postgres + new-api 两个容器
+#   - 不暴露 new-api 公网端口, 仅经 nginx-server 入口; postgres 15432 为运维直连保留
 services:
-  new-api:
-    image: ${IMAGE:-new-api}:${VERSION:-latest}
-    container_name: new-api
-    restart: always
-    command: --log-dir /app/logs
-    ports:
-      # 过渡期默认绑定 0.0.0.0 (A 服务器 nginx 兜底反代仍直连此端口);
-      # 防爆破: 对外端口用 PROD_PORT 改非标端口 (生产 13000), 容器内仍是 3000;
-      # DNS 切到本机后在服务器 deploy.env 设置 API_BIND_ADDR=127.0.0.1, 仅经本机 nginx 暴露
-      - "${API_BIND_ADDR:-0.0.0.0}:${PROD_PORT:-3000}:3000"
-    volumes:
-      - ${APP_BASE:-/app/new-api}/data:/data
-      - ${APP_BASE:-/app/new-api}/logs:/app/logs
-    environment:
-      - SQL_DSN=postgresql://root:${POSTGRES_PASSWORD:?run make secrets first}@postgres:5432/new-api
-      - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:?run make secrets first}@redis:6379
-      - SESSION_SECRET=${SESSION_SECRET:?run make secrets first}
-      - TZ=Asia/Shanghai
-      - ERROR_LOG_ENABLED=true
-      - BATCH_UPDATE_ENABLED=true
-      - NODE_NAME=new-api-prod-1
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - new-api-network
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: new-api-nginx
-    restart: always
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      # nginx.conf 与 ssl/ 由本地 make server-setup 上传
-      - ${APP_BASE:-/app/new-api}/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ${APP_BASE:-/app/new-api}/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      new-api:
-        condition: service_healthy
-    networks:
-      - new-api-network
-
-  redis:
-    image: redis:7-alpine
-    container_name: new-api-redis
-    restart: always
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?run make secrets first}"]
-    environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-    ports:
-      # 默认仅绑定回环, 外网访问用 SSH 隧道: ssh -L 6379:localhost:6379 root@<server>
-      # 确需公网暴露时在 .env 设置 DB_BIND_ADDR=0.0.0.0 (务必配合安全组限制来源 IP)
-      - "${DB_BIND_ADDR:-127.0.0.1}:6379:6379"
-    networks:
-      - new-api-network
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # 代理池出口节点 (tinyproxy + BasicAuth)
-  # 将本机公网 IP 作为稳定代理出口, 供 pydemo-cloud 等爬虫复用;
-  # 密钥由 make secrets 生成, 与 B 服务器 (ai-wx-mini) 的同名变量保持一致
-  exit-proxy:
-    image: monokal/tinyproxy:latest
-    container_name: exit-proxy
-    restart: always
-    ports:
-      # 默认绑定 0.0.0.0 供外网爬虫带认证访问;
-      # 配合云安全组仅放行 PROXY_PORT, BasicAuth 兜底防白嫖
-      - "${PROXY_BIND_ADDR:-0.0.0.0}:${PROXY_PORT:-18888}:8888"
-    environment:
-      - BASIC_AUTH_USER=${PROXY_USER:?run make secrets first}
-      - BASIC_AUTH_PASSWORD=${PROXY_PASS:?run make secrets first}
-      - TIMEOUT=600
-    command: ANY
-    networks:
-      - new-api-network
-
   # ⚠️⚠️⚠️ 数据安全红线 —— 操作 postgres 服务前必读 ⚠️⚠️⚠️
-  # 1. 本实例承载两个业务库: new-api + call-it-a-day (2026-10-14 起由 MySQL 迁入)
+  # 1. 本实例承载两个业务库: new-api + call_it_a_day (2026-10-14 起由 MySQL 迁入)
   # 2. 数据落盘在 bind mount /app/new-api/pgdata (容器内 /var/lib/postgresql/data)
   # 3. 严禁: docker compose down -v | docker volume rm (任何 pg 相关卷) | rm -rf pgdata | docker system prune --volumes
   # 4. 重建镜像/升级/迁移等任何破坏性操作前, 必须先手动 pg_dump 全库;
@@ -103,25 +19,52 @@ services:
     container_name: new-api-postgres
     restart: always
     environment:
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make secrets first}
-      POSTGRES_DB: new-api
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=new-api
+      - TZ=Asia/Shanghai
     volumes:
-      # 生产固定 bind mount (对齐服务器实际运行态), 禁止改回 named volume
       - /app/new-api/pgdata:/var/lib/postgresql/data
+    # 2026-10-14 按用户要求暴露公网运维直连端口(防爆破非标 15432, 密码见服务器 .env POSTGRES_PASSWORD)
     ports:
-      # Postgres 运维直连:默认仅回环;
-      # 对外暴露时在 deploy.env 设 POSTGRES_BIND_ADDR=0.0.0.0 + POSTGRES_PUBLIC_PORT 非标端口
-      # (生产 15432,防爆破,参照 call-it-a-day MYSQL_PUBLIC_PORT=13306;务必配合安全组放行)
-      - "${POSTGRES_BIND_ADDR:-127.0.0.1}:${POSTGRES_PUBLIC_PORT:-5432}:5432"
+      - "15432:5432"
     networks:
-      - new-api-network
+      - mini-network
+    mem_limit: 384m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U root -d new-api"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  new-api:
+    image: ${IMAGE:-new-api}:${VERSION:-28214a3fd}
+    container_name: new-api
+    restart: always
+    command: --log-dir /app/logs
+    volumes:
+      - /app/new-api/data:/data
+      - /app/new-api/logs:/app/logs
+    environment:
+      - SQL_DSN=postgresql://root:${POSTGRES_PASSWORD}@postgres:5432/new-api
+      - REDIS_CONN_STRING=redis://:${POOL_REDIS_PASSWORD}@pool-redis:6379/2
+      - SESSION_SECRET=${SESSION_SECRET}
+      - TZ=Asia/Shanghai
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+      - NODE_NAME=new-api-prod-139
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mini-network
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 networks:
-  new-api-network:
-    driver: bridge
+  mini-network:
+    external: true
