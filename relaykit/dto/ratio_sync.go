@@ -5,9 +5,6 @@ type UpstreamDTO struct {
 	Name     string `json:"name" binding:"required"`
 	BaseURL  string `json:"base_url" binding:"required"`
 	Endpoint string `json:"endpoint"`
-	// Token optionally overrides the channel key for upstreams whose pricing
-	// endpoint requires a separate credential (e.g. model-plaza web tokens).
-	Token string `json:"token,omitempty"`
 }
 
 type UpstreamRequest struct {

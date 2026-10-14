@@ -21,6 +21,7 @@ import { createContext, useContext } from 'react'
 import {
   BILLING_PRICING_VARS,
   splitBillingExprAndRequestRules,
+  type BillingVar,
 } from '@/features/pricing/lib/billing-expr'
 import { tryParseVisualConfig } from '@/features/pricing/lib/tier-expr'
 
@@ -30,8 +31,6 @@ import {
   OFFICIAL_CHANNEL_NAME,
   MODELS_DEV_PRESET_ID,
   MODELS_DEV_PRESET_NAME,
-  MODEL_PLAZA_SELL_SUFFIX,
-  MODEL_PLAZA_OFFICIAL_SUFFIX,
 } from './constants'
 import { formatPricingNumber } from './pricing-format'
 
@@ -53,14 +52,6 @@ export function getUpstreamDisplayName(
     sourceName === `${MODELS_DEV_PRESET_NAME}(${MODELS_DEV_PRESET_ID})`
   ) {
     return t('models.dev pricing preset')
-  }
-  // A model-plaza source produces two columns per upstream, marked with
-  // wire-protocol suffixes from the backend (see constants.ts).
-  if (sourceName.endsWith(MODEL_PLAZA_SELL_SUFFIX)) {
-    return `${sourceName.slice(0, -MODEL_PLAZA_SELL_SUFFIX.length)} · ${t('Selling price')}`
-  }
-  if (sourceName.endsWith(MODEL_PLAZA_OFFICIAL_SUFFIX)) {
-    return `${sourceName.slice(0, -MODEL_PLAZA_OFFICIAL_SUFFIX.length)} · ${t('Official price')}`
   }
   return sourceName
 }
@@ -149,13 +140,14 @@ export function getSyncExpressionPricing(
   const config = tryParseVisualConfig(billingExpr)
   if (!config) return null
   // Do not turn malformed or overflowing upstream numbers into free prices.
-  const body = billingExpr.replace(/"(?:\\.|[^"\\])*"/g, '')
+  const body = billingExpr.replaceAll(/"(?:\\.|[^"\\])*"/g, '')
   for (const match of body.matchAll(/\*\s*([+\-\d.eE]+)/g)) {
     if (!Number.isFinite(Number(match[1])) || Number(match[1]) < 0) return null
   }
   const fields = BILLING_PRICING_VARS.filter(
-    (field) =>
-      field.tierField && new RegExp(`\\b${field.key}\\s*\\*`).test(body)
+    (field): field is BillingVar & { tierField: string } =>
+      Boolean(field.tierField) &&
+      new RegExp(`\\b${field.key}\\s*\\*`).test(body)
   )
   const conditionLabels = {
     p: t('Input tokens'),
@@ -174,7 +166,7 @@ export function getSyncExpressionPricing(
         .join(' ∧ '),
       lines: fields.map((field) => ({
         label: t(field.shortLabel),
-        value: `$${formatPricingNumber(Number(tier[field.tierField!]))}`,
+        value: `$${formatPricingNumber(Number(tier[field.tierField]))}`,
       })),
     })),
   }

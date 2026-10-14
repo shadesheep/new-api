@@ -38,7 +38,6 @@ import { api } from '@/lib/api'
 import { UpstreamRatioSync } from '../models/upstream-ratio-sync'
 import {
   getSyncPriceLines,
-  getUpstreamDisplayName,
   type PricingSourceSelections,
 } from '../models/upstream-ratio-sync-helpers'
 import { UpstreamRatioSyncTable } from '../models/upstream-ratio-sync-table'
@@ -562,17 +561,4 @@ it('preserves upstream expression text so a repeated comparison remains unchange
   expect(
     pricingValuesByModel(after).get('model')?.['billing_setting.billing_expr']
   ).toBe(source)
-})
-
-describe('model-plaza upstream display names', () => {
-  it('strips the wire suffix and appends a localized sell/official label', () => {
-    const t = (key: string) => key
-    expect(getUpstreamDisplayName('Plaza(3)|sell', t)).toBe(
-      'Plaza(3) · Selling price'
-    )
-    expect(getUpstreamDisplayName('Plaza(3)|official', t)).toBe(
-      'Plaza(3) · Official price'
-    )
-    expect(getUpstreamDisplayName('Plaza(3)', t)).toBe('Plaza(3)')
-  })
 })

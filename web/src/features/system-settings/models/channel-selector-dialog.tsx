@@ -46,7 +46,6 @@ import {
   CHANNEL_STATUS_CONFIG,
   DEFAULT_ENDPOINT,
   ENDPOINT_OPTIONS,
-  MODEL_PLAZA_ENDPOINT,
   MODELS_DEV_PRESET_ID,
   OFFICIAL_CHANNEL_ID,
 } from './constants'
@@ -60,8 +59,6 @@ type ChannelSelectorDialogProps = {
   onSelectedChannelIdsChange: (ids: number[]) => void
   channelEndpoints: Record<number, string>
   onChannelEndpointsChange: (endpoints: Record<number, string>) => void
-  channelTokens: Record<number, string>
-  onChannelTokensChange: (tokens: Record<number, string>) => void
   onConfirm: (selectedIds: number[]) => void
 }
 
@@ -81,8 +78,6 @@ export function ChannelSelectorDialog({
   onSelectedChannelIdsChange,
   channelEndpoints,
   onChannelEndpointsChange,
-  channelTokens,
-  onChannelTokensChange,
   onConfirm,
 }: ChannelSelectorDialogProps) {
   const { t } = useTranslation()
@@ -116,16 +111,6 @@ export function ChannelSelectorDialog({
       })
     },
     [channelEndpoints, onChannelEndpointsChange]
-  )
-
-  const updateToken = useCallback(
-    (channelId: number, token: string) => {
-      onChannelTokensChange({
-        ...channelTokens,
-        [channelId]: token,
-      })
-    },
-    [channelTokens, onChannelTokensChange]
   )
 
   const getEndpointType = (endpoint: string) => {
@@ -284,20 +269,12 @@ export function ChannelSelectorDialog({
                   className='h-8 min-w-0 flex-1 font-mono text-xs'
                 />
               )}
-              {endpointType === MODEL_PLAZA_ENDPOINT && (
-                <Input
-                  value={channelTokens[channel.id] || ''}
-                  onChange={(e) => updateToken(channel.id, e.target.value)}
-                  placeholder={t('Access token (optional)')}
-                  className='h-8 min-w-0 flex-1 font-mono text-xs'
-                />
-              )}
             </div>
           )
         },
       },
     ],
-    [channelEndpoints, channelTokens, t, updateEndpoint, updateToken]
+    [channelEndpoints, t, updateEndpoint]
   )
 
   const filteredChannels = useMemo(() => {
