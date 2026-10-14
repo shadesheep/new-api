@@ -127,6 +127,9 @@
           "getPolicySectionNavItems",
           "getPolicySectionContent",
           "getPolicySectionMeta",
+          "getPriceSyncSectionNavItems",
+          "getPriceSyncSectionContent",
+          "getPriceSyncSectionMeta",
           "getSecuritySectionNavItems",
           "getSecuritySectionContent",
           "getSecuritySectionMeta",
@@ -135,6 +138,8 @@
           "getSiteSectionMeta",
           "getUsageLogsSectionNavItems",
           "isUsageLogsSectionId",
+          "priceSyncFieldLabel",
+          "priceSyncSkipReasonLabel",
           "useSuppressSettingsSectionHeader"
         ]
       }
