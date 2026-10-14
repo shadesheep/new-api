@@ -11,7 +11,7 @@
 # Stop:
 #   docker compose -f docker-compose.dev.yml down
 #
-# Reset data:
+# Reset data (仅限本地 dev 环境; 生产严禁 down -v, 见 deploy/docker-compose.server.yml):
 #   docker compose -f docker-compose.dev.yml down -v
 
 services:
@@ -51,6 +51,9 @@ services:
     networks:
       - dev-network
 
+  # ⚠️ 本地 dev 的 named volume (dev_pg_data) 可随意 down -v;
+  #    生产环境严禁, 生产数据在 bind mount /app/new-api/pgdata,
+  #    详见 deploy/docker-compose.server.yml 的数据安全红线注释
   postgres:
     image: postgres:15-alpine
     container_name: new-api-dev-pg

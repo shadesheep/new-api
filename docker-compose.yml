@@ -78,6 +78,9 @@ services:
     networks:
       - new-api-network
 
+  # ⚠️ 本文件是本地模板: 本地 named volume (pg_data) 可随意 down -v 重建;
+  #    生产环境严禁, 生产数据在 bind mount /app/new-api/pgdata,
+  #    详见 deploy/docker-compose.server.yml 的数据安全红线注释
   postgres:
     image: postgres:15
     container_name: postgres

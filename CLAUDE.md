@@ -14,3 +14,4 @@ Rules:
 - After reading, follow every rule in `AGENTS.md` for the rest of the work.
 - If the task touches `web/`, also Read `web/AGENTS.md` before editing frontend files.
 - If the task touches billing as defined under **Billing rules (mandatory read gate)** in `AGENTS.md`, also Read `.agents/rules/billing.md` in full before planning or editing. Tasks outside that definition may skip it.
+- If the task touches production deployment, the `new-api-postgres` container, or any destructive Docker operation (`down -v`, `volume rm`, `prune --volumes`), also Read the 「数据安全红线 (Data Safety Red Lines)」 section in `AGENTS.md` — 生产 PG 数据严禁删除或重置。

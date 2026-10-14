@@ -6,6 +6,15 @@ DO NOT send optional commentary
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
 
+## 数据安全红线 (Data Safety Red Lines)
+
+- 生产 `new-api-postgres` 实例承载两个业务库: `new-api`、`call_it_a_day` (2026-10-14 起由 MySQL 迁入)。
+- 生产数据落盘: bind mount `/app/new-api/pgdata` (容器内 `/var/lib/postgresql/data`)。
+- 明令禁止(生产环境): `docker compose down -v`、`docker volume rm` 任何 pg 相关卷、`rm -rf /app/new-api/pgdata`、`docker system prune --volumes`。
+- 重建镜像/升级/迁移等破坏性操作前, 必须先手动 `pg_dump` 全库 (`pg_dumpall` 或逐库 `pg_dump -Fc`), 不能仅依赖每日 02:30 的自动异地备份。
+- 每日备份链路: 02:30 `backup-pg-remote.sh` → 138:`/app/remote-backups/` (保留 7 天); 备份脚本覆盖哪些库以服务器 crontab 为准。
+- 服务器 `/app/new-api/docker-compose.yml` 由 `deploy/docker-compose.server.yml` 经 `make server-setup` 上传; 改生产 compose 必须改仓库模板再上传, 禁止只在服务器上手改。
+
 ## Tech Stack
 
 - **Backend**: Go 1.26 for the root module and `tokenkit/`, Go 1.25.1 for `relaykit/` (see each module’s `go.mod`), Gin web framework, GORM v2 ORM

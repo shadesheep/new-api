@@ -92,6 +92,12 @@ services:
     networks:
       - new-api-network
 
+  # ⚠️⚠️⚠️ 数据安全红线 —— 操作 postgres 服务前必读 ⚠️⚠️⚠️
+  # 1. 本实例承载两个业务库: new-api + call-it-a-day (2026-10-14 起由 MySQL 迁入)
+  # 2. 数据落盘在 bind mount /app/new-api/pgdata (容器内 /var/lib/postgresql/data)
+  # 3. 严禁: docker compose down -v | docker volume rm (任何 pg 相关卷) | rm -rf pgdata | docker system prune --volumes
+  # 4. 重建镜像/升级/迁移等任何破坏性操作前, 必须先手动 pg_dump 全库;
+  #    每日 02:30 已有异地备份到 138, 但那是最低保障, 不是操作借口
   postgres:
     image: postgres:15
     container_name: new-api-postgres
@@ -101,7 +107,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make secrets first}
       POSTGRES_DB: new-api
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      # 生产固定 bind mount (对齐服务器实际运行态), 禁止改回 named volume
+      - /app/new-api/pgdata:/var/lib/postgresql/data
     ports:
       # Postgres 运维直连:默认仅回环;
       # 对外暴露时在 deploy.env 设 POSTGRES_BIND_ADDR=0.0.0.0 + POSTGRES_PUBLIC_PORT 非标端口
@@ -114,9 +121,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-volumes:
-  pg_data:
 
 networks:
   new-api-network:
