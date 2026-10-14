@@ -3,7 +3,14 @@
 # 与根 Dockerfile 的最终运行阶段保持一致, 但跳过前端/Go 编译, 秒级完成
 FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
 
-RUN apt-get update \
+# 构建期 apt 切阿里云镜像: 阿里云机器直连 deb.debian.org 极慢 (实测 ~12KiB/s),
+# 2026-10-14 发布时该步骤曾卡死十余分钟; 兼容 deb822 (.sources) 与旧格式 (.list)
+RUN for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do \
+      if [ -f "$f" ]; then \
+        sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g; s|http://security.debian.org|http://mirrors.aliyun.com|g' "$f"; \
+      fi; \
+    done \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
     && rm -rf /var/lib/apt/lists/* \
     && update-ca-certificates
