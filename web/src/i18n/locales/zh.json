@@ -7321,7 +7321,7 @@
     "1h cache write derived": "1h 缓存写入为派生值",
     "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "1h 缓存写入价格由 5m 价格派生（×1.6），并非从上游同步。",
     "Price basis mismatch": "价格基准不一致",
-    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "上游售价与官方价存在偏差，成本底线按官方价计算。",
+    "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually.": "该模型与本组的价格基准不一致，分组倍率可能不适用于它，建议人工复核。",
     "Base price": "基准价格",
     "Official input price per 1M tokens": "每 1M tokens 的官方输入价格",
     "Some groups would be priced below cost": "部分分组的售价将低于成本",

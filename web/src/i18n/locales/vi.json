@@ -7321,7 +7321,7 @@
     "1h cache write derived": "Giá ghi cache 1h là giá trị suy ra",
     "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "Giá ghi cache 1h được suy ra từ giá 5m (×1,6), không đồng bộ từ nguồn.",
     "Price basis mismatch": "Không khớp cơ sở giá",
-    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "Giá bán nguồn chênh lệch so với giá chính thức; giá vốn tối thiểu dùng giá chính thức.",
+    "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually.": "Model này không cùng cơ sở giá với nhóm của nó, nên tỷ lệ nhóm có thể không phù hợp. Vui lòng kiểm tra thủ công.",
     "Base price": "Giá cơ bản",
     "Official input price per 1M tokens": "Giá đầu vào chính thức trên 1M token",
     "Some groups would be priced below cost": "Một số nhóm sẽ được định giá dưới giá vốn",

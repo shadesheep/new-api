@@ -7321,7 +7321,7 @@
     "1h cache write derived": "1h キャッシュ書き込みは派生値",
     "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "1h キャッシュ書き込み価格は 5m 価格から派生（×1.6）し、上流から同期されません。",
     "Price basis mismatch": "価格基準の不一致",
-    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "上流の販売価格が公式価格と乖離しています。コスト下限には公式価格を使用します。",
+    "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually.": "このモデルはグループの価格基準と一致しないため、グループ倍率が適用できない可能性があります。手動で確認してください。",
     "Base price": "基準価格",
     "Official input price per 1M tokens": "1M トークンあたりの公式入力価格",
     "Some groups would be priced below cost": "一部のグループがコストを下回る価格になります",

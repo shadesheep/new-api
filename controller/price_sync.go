@@ -43,6 +43,18 @@ const (
 	priceSyncMaxFactor = 1e6
 	priceSyncMaxPrice  = 1e6
 	priceSyncMinInput  = 1e-12
+
+	// roundRatioValue stores ratios to six decimals, so a synced ratio can sit up
+	// to this far from its exact value. Comparisons that convert a rounded ratio
+	// back into a price must allow for at least this much slack.
+	priceSyncRatioRounding = 1e-6
+
+	// How far a slot's sell-to-official price ratio may sit from 1 (USD basis)
+	// or from the plaza's declared USD-to-CNY rate (CNY basis) and still count
+	// as a recognised basis. Reseller groups quote rounded prices, so live CNY
+	// slots land a few percent off the declared rate.
+	priceSyncBasisSameTolerance = 0.01
+	priceSyncBasisCNYTolerance  = 0.25
 )
 
 // priceSyncFieldOptionKeys maps plan field names to their option keys. Option
@@ -110,8 +122,8 @@ type priceSyncPlazaModel struct {
 	Name    string                `json:"name"`
 	Pricing priceSyncPlazaPricing `json:"pricing"`
 	// OfficialPricing is the plaza's official list price, when provided. It is
-	// only read to flag models whose synced pricing is denominated on a
-	// different basis (some plazas quote non-USD prices in the same fields).
+	// the USD reference basis: some plazas quote a group's own prices in the
+	// local currency, and the gap against this field is what identifies it.
 	OfficialPricing *priceSyncPlazaPricing `json:"official_pricing"`
 }
 
@@ -133,10 +145,11 @@ type priceSyncGroupPlan struct {
 	LocalName      string  `json:"local_name"`
 	Enabled        bool    `json:"enabled"`
 	RateMultiplier float64 `json:"rate_multiplier"`
-	// CostRate is the upstream cost rate in CNY per USD (the "元/刀" meaning of
-	// rate_multiplier); Markup is the effective sell markup over the cost
-	// floor, and BelowCost flags a group whose synced ratio would sell under
-	// cost in the site's display currency.
+	// CostRate is the group's own price in CNY per USD of the official price
+	// (the "元/刀" meaning of rate_multiplier, with the plaza's currency basis
+	// folded in); Markup is the effective sell markup over the cost floor, and
+	// BelowCost flags a group whose synced ratio would sell under cost in the
+	// site's display currency.
 	CostRate  float64  `json:"cost_rate"`
 	Markup    float64  `json:"markup"`
 	BelowCost bool     `json:"below_cost,omitempty"`
@@ -439,16 +452,19 @@ func derivePriceSyncSourceID(name string, seen map[string]struct{}) string {
 	}
 }
 
-func fetchPriceSyncPlazaGroups(ctx context.Context, source priceSyncSource) ([]priceSyncPlazaGroup, error) {
+// fetchPriceSyncPlazaGroups returns the plaza groups plus the plaza's declared
+// USD-to-CNY rate, which is how a group's own (possibly CNY-denominated) prices
+// are recognised against the USD official prices.
+func fetchPriceSyncPlazaGroups(ctx context.Context, source priceSyncSource) ([]priceSyncPlazaGroup, float64, error) {
 	parsed, err := url.Parse(source.URL)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return nil, errors.New("invalid source URL")
+		return nil, 0, errors.New("invalid source URL")
 	}
 	ctx, cancel := context.WithTimeout(ctx, priceSyncFetchTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if source.Token != "" {
 		request.Header.Set("Authorization", "Bearer "+source.Token)
@@ -465,47 +481,59 @@ func fetchPriceSyncPlazaGroups(ctx context.Context, source priceSyncSource) ([]p
 	}
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("source returned %s", response.Status)
+		return nil, 0, fmt.Errorf("source returned %s", response.Status)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxRatioConfigBytes))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var payload struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Data    struct {
-			Groups []priceSyncPlazaGroup `json:"groups"`
+			Groups       []priceSyncPlazaGroup `json:"groups"`
+			USDToCNYRate float64               `json:"usd_to_cny_rate"`
 		} `json:"data"`
 	}
 	if err := common.DecodeJson(bytes.NewReader(body), &payload); err != nil {
-		return nil, errors.New("failed to parse the source response")
+		return nil, 0, errors.New("failed to parse the source response")
 	}
 	if payload.Code != 0 {
 		if payload.Message == "" {
 			payload.Message = "source rejected the request"
 		}
-		return nil, errors.New(payload.Message)
+		return nil, 0, errors.New(payload.Message)
 	}
 	if len(payload.Data.Groups) == 0 {
-		return nil, errors.New("source returned no groups")
+		return nil, 0, errors.New("source returned no groups")
 	}
-	return payload.Data.Groups, nil
+	// A missing or nonsensical rate simply disables CNY basis detection: every
+	// slot is then read as USD, which is the pre-existing behaviour.
+	plazaRate := payload.Data.USDToCNYRate
+	if !isFiniteFactor(plazaRate) || plazaRate <= 1 {
+		plazaRate = 0
+	}
+	return payload.Data.Groups, plazaRate, nil
 }
 
 // convertPriceSyncPricing converts one slot's pricing into local ratio fields.
-// Conversion factors scale prices only; the relative multipliers
-// (completion/cache/image) are ratios between two prices and stay unchanged.
-func convertPriceSyncPricing(pricing priceSyncPlazaPricing, conversion float64) (map[string]float64, string) {
+// basisFactor divides prices onto the plaza's USD reference basis first, so a
+// slot quoted in CNY lands on the same basis as every other model. Conversion
+// factors scale prices only; the relative multipliers (completion/cache/image)
+// are ratios between two prices and stay unchanged.
+func convertPriceSyncPricing(pricing priceSyncPlazaPricing, conversion, basisFactor float64) (map[string]float64, string) {
+	if basisFactor <= 0 || !isFiniteFactor(basisFactor) {
+		basisFactor = 1
+	}
 	if pricing.BillingMode == billing_setting.BillingModeTieredExpr || len(pricing.Intervals) > 0 {
 		return nil, priceSyncSkipUnsupportedPricing
 	}
 	if pricing.PerRequestPrice != nil {
-		price := *pricing.PerRequestPrice
+		price := *pricing.PerRequestPrice / basisFactor
 		if !validSyncPrice(price) {
 			return nil, priceSyncSkipInvalidPricing
 		}
@@ -514,7 +542,7 @@ func convertPriceSyncPricing(pricing priceSyncPlazaPricing, conversion float64) 
 	if pricing.InputPrice == nil {
 		return nil, priceSyncSkipEmptyPricing
 	}
-	input := *pricing.InputPrice
+	input := *pricing.InputPrice / basisFactor
 	if !validSyncPrice(input) {
 		return nil, priceSyncSkipInvalidPricing
 	}
@@ -543,10 +571,11 @@ func convertPriceSyncPricing(pricing priceSyncPlazaPricing, conversion float64) 
 		if item.price == nil {
 			continue
 		}
-		if !validSyncPrice(*item.price) {
-			return nil, priceSyncSkipInvalidPricing
-		}
-		ratio := roundRatioValue(*item.price / input)
+		// Both prices are on the same basis, so the factor cancels out of the
+		// ratio; it is applied only so the arithmetic reads uniformly. Only the
+		// ratio is stored and the input price was bounded above, so checking the
+		// ratio is what keeps a broken upstream price out of the billing maps.
+		ratio := roundRatioValue(*item.price / basisFactor / input)
 		if !validSyncMultiplier(ratio) {
 			return nil, priceSyncSkipInvalidPricing
 		}
@@ -582,25 +611,70 @@ type priceSyncModelCandidate struct {
 	cache1hDerived bool
 }
 
-// priceSyncBasisMismatch reports whether the synced pricing and the plaza's
-// official pricing disagree on the input price by more than 1%, which is how
-// a non-USD price basis (or stale official data) shows up.
-func priceSyncBasisMismatch(pricing priceSyncPlazaPricing, official *priceSyncPlazaPricing) bool {
+// priceSyncBasis is the detected currency basis of one plaza slot's pricing.
+type priceSyncBasis struct {
+	// Factor divides this slot's prices onto the plaza's USD reference basis.
+	Factor float64
+	// Detected is true when the slot sits on a recognised basis: the USD
+	// reference itself, or the plaza's own declared USD-to-CNY rate.
+	Detected bool
+	// Unexplained is true when official_pricing disagrees by more than the
+	// tolerance and no declared basis accounts for the gap, so the slot is read
+	// as USD and flagged for manual review.
+	Unexplained bool
+}
+
+// detectPriceSyncBasis classifies how a slot's prices relate to the plaza's
+// official USD prices. Reseller groups may quote their own prices in CNY while
+// official_pricing stays in USD; the gap is then the plaza's declared
+// USD-to-CNY rate and the prices must be divided by it before they can become
+// local ratios. A plaza that declares no usable rate leaves every slot on the
+// USD basis, which is the pre-existing behaviour.
+func detectPriceSyncBasis(pricing priceSyncPlazaPricing, official *priceSyncPlazaPricing, plazaRate float64) priceSyncBasis {
 	if official == nil || pricing.InputPrice == nil || official.InputPrice == nil {
-		return false
+		return priceSyncBasis{Factor: 1}
 	}
 	officialInput := *official.InputPrice
-	if officialInput <= 0 {
-		return false
+	if officialInput <= 0 || *pricing.InputPrice <= 0 {
+		return priceSyncBasis{Factor: 1}
 	}
-	return math.Abs(*pricing.InputPrice-officialInput)/officialInput > 0.01
+	ratio := *pricing.InputPrice / officialInput
+	if math.Abs(ratio-1) <= priceSyncBasisSameTolerance {
+		return priceSyncBasis{Factor: 1, Detected: true}
+	}
+	if plazaRate > 1 && math.Abs(ratio-plazaRate) <= plazaRate*priceSyncBasisCNYTolerance {
+		return priceSyncBasis{Factor: plazaRate, Detected: true}
+	}
+	return priceSyncBasis{Factor: 1, Unexplained: true}
+}
+
+// dominantPriceSyncBasis returns the basis shared by most of a group's models.
+// A group sells at a single rate, so when its models disagree the majority
+// basis wins and the outliers are flagged; models with no official price to
+// compare against inherit this value.
+func dominantPriceSyncBasis(models []priceSyncPlazaModel, plazaRate float64) float64 {
+	votes := map[float64]int{}
+	for _, model := range models {
+		if basis := detectPriceSyncBasis(model.Pricing, model.OfficialPricing, plazaRate); basis.Detected {
+			votes[basis.Factor]++
+		}
+	}
+	dominant := 1.0
+	best := 0
+	for _, factor := range slices.Sorted(maps.Keys(votes)) {
+		if votes[factor] > best {
+			dominant, best = factor, votes[factor]
+		}
+	}
+	return dominant
 }
 
 // buildPriceSyncPlan is the pure core of preview and apply: given the source
 // configuration and freshly fetched plaza groups it computes the effective
 // local write set, the skipped entries with stable reason codes, and a digest
-// over everything that was displayed.
-func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (priceSyncPlan, error) {
+// over everything that was displayed. plazaRate is the plaza's declared
+// USD-to-CNY rate, or 0 when it declares none.
+func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup, plazaRate float64) (priceSyncPlan, error) {
 	plan := priceSyncPlan{
 		SiteRate:   priceSyncSiteRate(),
 		Groups:     make([]priceSyncGroupPlan, 0, len(groups)),
@@ -612,6 +686,7 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 	groupRatioLocal := ratio_setting.GetGroupRatioCopy()
 	usableLocal := setting.GetUserUsableGroupsCopy()
 	modelsByGroup := make([][]priceSyncPlazaModel, 0, len(groups))
+	groupBases := make([]float64, 0, len(groups))
 
 	for _, group := range groups {
 		override := source.Groups[fmt.Sprintf("%d", group.ID)]
@@ -626,11 +701,17 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 		if !validSyncMultiplier(group.RateMultiplier) {
 			continue
 		}
+		groupBasis := dominantPriceSyncBasis(group.Models, plazaRate)
 		markup := source.MarkupFactor
 		if override.MarkupFactor != nil {
 			markup = *override.MarkupFactor
 		}
-		newRatio := roundRatioValue(group.RateMultiplier * markup / plan.SiteRate)
+		// costBasis is the group's own price in CNY per USD of official price
+		// ("元/刀"). A CNY-quoted group carries the plaza's conversion rate here
+		// so that everything downstream is denominated in the display currency.
+		costBasis := group.RateMultiplier * groupBasis
+		costRate := roundRatioValue(costBasis)
+		newRatio := roundRatioValue(costBasis * markup / plan.SiteRate)
 		if !validSyncMultiplier(newRatio) {
 			continue
 		}
@@ -641,15 +722,18 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 			LocalName:      localName,
 			Enabled:        enabled,
 			RateMultiplier: group.RateMultiplier,
-			CostRate:       group.RateMultiplier,
+			CostRate:       costRate,
 			Markup:         markup,
 			NewRatio:       newRatio,
 		}
 		// Below cost means the synced sell ratio converts back to less than the
-		// upstream cost rate in the display currency. nearlyEqual absorbs the
-		// 6-decimal rounding of newRatio.
+		// upstream cost rate in the display currency. newRatio is rounded to six
+		// decimals, which at a site rate of 7 shifts the sell rate by up to
+		// 3.5e-6, so a markup of exactly 1 must not read as below cost just
+		// because 0.6/7 rounds down to 0.085714. Anything under cost by more than
+		// one rounding step is a genuine shortfall.
 		sellRate := newRatio * plan.SiteRate
-		entry.BelowCost = sellRate < group.RateMultiplier && !nearlyEqual(sellRate, group.RateMultiplier)
+		entry.BelowCost = costBasis-sellRate > priceSyncRatioRounding*plan.SiteRate
 		if old, exists := groupRatioLocal[localName]; exists {
 			value := old
 			entry.OldRatio = &value
@@ -660,6 +744,7 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 		}
 		plan.Groups = append(plan.Groups, entry)
 		modelsByGroup = append(modelsByGroup, group.Models)
+		groupBases = append(groupBases, groupBasis)
 		if entry.Enabled && entry.Changed {
 			if entry.Created {
 				plan.Summary.GroupsCreated++
@@ -684,6 +769,7 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 		if !group.Enabled {
 			continue
 		}
+		groupBasis := groupBases[i]
 		for _, model := range modelsByGroup[i] {
 			name := strings.TrimSpace(model.Name)
 			if name == "" {
@@ -693,15 +779,25 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 				candidates[name] = append(candidates[name], priceSyncModelCandidate{reason: priceSyncSkipTieredExpr})
 				continue
 			}
-			fields, reason := convertPriceSyncPricing(model.Pricing, source.ConversionFactor)
+			basis := detectPriceSyncBasis(model.Pricing, model.OfficialPricing, plazaRate)
+			factor := basis.Factor
+			if !basis.Detected {
+				// Without an official price to compare against the slot cannot
+				// be classified on its own, so it inherits the group's basis.
+				factor = groupBasis
+			}
+			fields, reason := convertPriceSyncPricing(model.Pricing, source.ConversionFactor, factor)
 			candidate := priceSyncModelCandidate{
-				fields:        fields,
-				reason:        reason,
-				basisMismatch: priceSyncBasisMismatch(model.Pricing, model.OfficialPricing),
+				fields: fields,
+				reason: reason,
+				// Outliers only matter for a group that sells at one rate: a
+				// slot whose own basis differs from its group's is priced off
+				// the group ratio and needs a human look.
+				basisMismatch: basis.Unexplained || (basis.Detected && basis.Factor != groupBasis),
 			}
 			if reason == "" {
 				if model.Pricing.InputPrice != nil {
-					candidate.basePrice = *model.Pricing.InputPrice * 1e6 * source.ConversionFactor
+					candidate.basePrice = *model.Pricing.InputPrice / factor * 1e6 * source.ConversionFactor
 				}
 				_, candidate.cache1hDerived = fields["create_cache_ratio"]
 			}
@@ -835,12 +931,12 @@ func PreviewPriceSync(c *gin.Context) {
 		common.ApiErrorT(c, "Sync source is disabled")
 		return
 	}
-	groups, err := fetchPriceSyncPlazaGroups(c.Request.Context(), source)
+	groups, plazaRate, err := fetchPriceSyncPlazaGroups(c.Request.Context(), source)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusBadGateway, common.NewMessage("Failed to fetch sync source"), gin.H{"detail": err.Error()})
 		return
 	}
-	plan, err := buildPriceSyncPlan(source, groups)
+	plan, err := buildPriceSyncPlan(source, groups, plazaRate)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, common.NewMessage("Failed to build the sync plan"))
 		return
@@ -884,12 +980,12 @@ func ApplyPriceSync(c *gin.Context) {
 	}
 	priceSyncApplyMutex.Lock()
 	defer priceSyncApplyMutex.Unlock()
-	groups, err := fetchPriceSyncPlazaGroups(c.Request.Context(), source)
+	groups, plazaRate, err := fetchPriceSyncPlazaGroups(c.Request.Context(), source)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusBadGateway, common.NewMessage("Failed to fetch sync source"), gin.H{"detail": err.Error()})
 		return
 	}
-	plan, err := buildPriceSyncPlan(source, groups)
+	plan, err := buildPriceSyncPlan(source, groups, plazaRate)
 	if err != nil {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, common.NewMessage("Failed to build the sync plan"))
 		return

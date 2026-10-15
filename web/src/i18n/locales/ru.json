@@ -7321,7 +7321,7 @@
     "1h cache write derived": "Запись кэша 1ч — производная",
     "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "Цена записи кэша 1ч выводится из цены 5м (×1,6), а не синхронизируется с апстримом.",
     "Price basis mismatch": "Несоответствие базы цены",
-    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "Цена продажи апстрима отличается от официальной; минимальная себестоимость использует официальную цену.",
+    "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually.": "База цены этой модели отличается от базы её группы; групповой коэффициент может не подойти. Проверьте вручную.",
     "Base price": "Базовая цена",
     "Official input price per 1M tokens": "Официальная цена входа за 1M токенов",
     "Some groups would be priced below cost": "Некоторые группы будут продаваться ниже себестоимости",

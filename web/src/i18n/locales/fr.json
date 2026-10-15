@@ -7321,7 +7321,7 @@
     "1h cache write derived": "Écriture cache 1h dérivée",
     "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "Le prix d'écriture du cache 1h est dérivé du prix 5m (×1,6), et non synchronisé depuis l'amont.",
     "Price basis mismatch": "Base de prix incohérente",
-    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "Le prix de vente amont diffère du prix officiel ; le plancher de coût utilise le prix officiel.",
+    "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually.": "Ce modèle ne partage pas la base de prix de son groupe ; le ratio du groupe peut ne pas lui convenir. À vérifier manuellement.",
     "Base price": "Prix de base",
     "Official input price per 1M tokens": "Prix d'entrée officiel par 1M de tokens",
     "Some groups would be priced below cost": "Certains groupes seraient tarifés en dessous du coût",

@@ -7321,7 +7321,7 @@
     "1h cache write derived": "1h cache write derived",
     "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.",
     "Price basis mismatch": "Price basis mismatch",
-    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "The upstream sell price diverges from the official price; the cost floor uses the official price.",
+    "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually.": "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually.",
     "Base price": "Base price",
     "Official input price per 1M tokens": "Official input price per 1M tokens",
     "Some groups would be priced below cost": "Some groups would be priced below cost",

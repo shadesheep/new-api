@@ -180,7 +180,7 @@ export function PriceSyncModelTable({
                 <Badge
                   variant='warning'
                   title={t(
-                    'The upstream sell price diverges from the official price; the cost floor uses the official price.'
+                    "This model does not share its group's price basis, so the group ratio may not fit it. Review it manually."
                   )}
                 >
                   {t('Price basis mismatch')}
