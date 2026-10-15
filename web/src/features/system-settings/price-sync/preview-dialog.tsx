@@ -62,6 +62,11 @@ export function PriceSyncPreviewDialog({
     retry: false,
   })
   const preview = previewQuery.data?.data
+  // Backend slices may serialize as null when empty; normalize to arrays.
+  const previewGroups = preview?.groups ?? []
+  const previewModels = preview?.models ?? []
+  const previewSkipped = preview?.skipped ?? []
+  const usableGroupsAdded = preview?.usable_groups_added ?? []
   const [allowBelowCost, setAllowBelowCost] = useState(false)
   const digest = preview?.digest
   // Reset the explicit below-cost consent whenever a new plan is built.
@@ -108,9 +113,10 @@ export function PriceSyncPreviewDialog({
     summary != null &&
     (summary.groups_created + summary.groups_updated + summary.models_updated >
       0 ||
-      (preview?.usable_groups_added.length ?? 0) > 0)
-  const belowCostGroups =
-    preview?.groups.filter((group) => group.enabled && group.below_cost) ?? []
+      usableGroupsAdded.length > 0)
+  const belowCostGroups = previewGroups.filter(
+    (group) => group.enabled && group.below_cost
+  )
   const hasBelowCost = belowCostGroups.length > 0
 
   let content
@@ -191,25 +197,25 @@ export function PriceSyncPreviewDialog({
             </label>
           </div>
         )}
-        {preview.groups.length > 0 && (
+        {previewGroups.length > 0 && (
           <div className='flex flex-col gap-2'>
             <h3 className='text-sm font-medium'>{t('Group ratios')}</h3>
-            <PriceSyncGroupTable groups={preview.groups} />
+            <PriceSyncGroupTable groups={previewGroups} />
           </div>
         )}
-        {preview.models.length > 0 && (
+        {previewModels.length > 0 && (
           <div className='flex flex-col gap-2'>
             <h3 className='text-sm font-medium'>{t('Model ratios')}</h3>
-            <PriceSyncModelTable models={preview.models} />
+            <PriceSyncModelTable models={previewModels} />
           </div>
         )}
-        {preview.usable_groups_added.length > 0 && (
+        {usableGroupsAdded.length > 0 && (
           <div className='flex flex-col gap-2'>
             <h3 className='text-sm font-medium'>
               {t('Groups added to user-usable list')}
             </h3>
             <div className='flex flex-wrap gap-2'>
-              {preview.usable_groups_added.map((group) => (
+              {usableGroupsAdded.map((group) => (
                 <Badge key={group} variant='outline'>
                   {group}
                 </Badge>
@@ -217,10 +223,10 @@ export function PriceSyncPreviewDialog({
             </div>
           </div>
         )}
-        {preview.skipped.length > 0 && (
+        {previewSkipped.length > 0 && (
           <div className='flex flex-col gap-2'>
             <h3 className='text-sm font-medium'>{t('Skipped models')}</h3>
-            <PriceSyncSkippedList skipped={preview.skipped} />
+            <PriceSyncSkippedList skipped={previewSkipped} />
           </div>
         )}
       </div>

@@ -604,6 +604,8 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 	plan := priceSyncPlan{
 		SiteRate:   priceSyncSiteRate(),
 		Groups:     make([]priceSyncGroupPlan, 0, len(groups)),
+		Models:     make([]priceSyncModelPlan, 0),
+		Skipped:    make([]priceSyncSkippedModel, 0),
 		UsableAdds: map[string]string{},
 	}
 	slices.SortFunc(groups, func(a, b priceSyncPlazaGroup) int { return cmp.Compare(a.ID, b.ID) })
@@ -843,6 +845,12 @@ func PreviewPriceSync(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusInternalServerError, common.NewMessage("Failed to build the sync plan"))
 		return
 	}
+	// slices.Sorted returns nil for an empty sequence; keep the JSON contract
+	// an array so frontend renders never see null.
+	usableGroupsAdded := slices.Sorted(maps.Keys(plan.UsableAdds))
+	if usableGroupsAdded == nil {
+		usableGroupsAdded = []string{}
+	}
 	common.ApiSuccess(c, gin.H{
 		"source":              priceSyncSourceView{priceSyncSource: source},
 		"digest":              plan.Digest,
@@ -851,7 +859,7 @@ func PreviewPriceSync(c *gin.Context) {
 		"models":              plan.Models,
 		"skipped":             plan.Skipped,
 		"summary":             plan.Summary,
-		"usable_groups_added": slices.Sorted(maps.Keys(plan.UsableAdds)),
+		"usable_groups_added": usableGroupsAdded,
 	})
 }
 

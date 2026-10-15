@@ -148,28 +148,28 @@ export function PriceSyncHistorySection() {
               </div>
               {expanded && (
                 <div className='mt-2 flex flex-col gap-4'>
-                  {snapshot.groups.length > 0 && (
+                  {(snapshot.groups?.length ?? 0) > 0 && (
                     <div className='flex flex-col gap-2'>
                       <h3 className='text-sm font-medium'>
                         {t('Group ratios')}
                       </h3>
-                      <PriceSyncGroupTable groups={snapshot.groups} />
+                      <PriceSyncGroupTable groups={snapshot.groups ?? []} />
                     </div>
                   )}
-                  {snapshot.models.length > 0 && (
+                  {(snapshot.models?.length ?? 0) > 0 && (
                     <div className='flex flex-col gap-2'>
                       <h3 className='text-sm font-medium'>
                         {t('Model ratios')}
                       </h3>
-                      <PriceSyncModelTable models={snapshot.models} />
+                      <PriceSyncModelTable models={snapshot.models ?? []} />
                     </div>
                   )}
-                  {snapshot.skipped.length > 0 && (
+                  {(snapshot.skipped?.length ?? 0) > 0 && (
                     <div className='flex flex-col gap-2'>
                       <h3 className='text-sm font-medium'>
                         {t('Skipped models')}
                       </h3>
-                      <PriceSyncSkippedList skipped={snapshot.skipped} />
+                      <PriceSyncSkippedList skipped={snapshot.skipped ?? []} />
                     </div>
                   )}
                 </div>

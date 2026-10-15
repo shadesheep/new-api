@@ -95,11 +95,12 @@ export type PriceSyncPreviewData = {
   digest: string
   // USD -> site display currency rate used when computing group ratios.
   site_rate: number
-  groups: PriceSyncGroupPlan[]
-  models: PriceSyncModelPlan[]
-  skipped: PriceSyncSkippedModel[]
+  // The backend serializes empty slices as null on older versions.
+  groups: PriceSyncGroupPlan[] | null
+  models: PriceSyncModelPlan[] | null
+  skipped: PriceSyncSkippedModel[] | null
   summary: PriceSyncSummary
-  usable_groups_added: string[]
+  usable_groups_added: string[] | null
 }
 
 export type PriceSyncSnapshot = {
@@ -109,9 +110,9 @@ export type PriceSyncSnapshot = {
   source_name: string
   digest: string
   summary: PriceSyncSummary
-  groups: PriceSyncGroupPlan[]
-  models: PriceSyncModelPlan[]
-  skipped: PriceSyncSkippedModel[]
+  groups: PriceSyncGroupPlan[] | null
+  models: PriceSyncModelPlan[] | null
+  skipped: PriceSyncSkippedModel[] | null
 }
 
 export type PriceSyncSourcesResponse = {
