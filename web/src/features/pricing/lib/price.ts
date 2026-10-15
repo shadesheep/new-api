@@ -168,9 +168,10 @@ export function formatPrice(
   const price = priceInUSD / TOKEN_UNIT_DIVISORS[tokenUnit]
   return formatBillingCurrencyFromUSD(price, {
     showSymbol: showCurrencySymbol,
-    digitsLarge: 4,
+    digitsLarge: 2,
     digitsSmall: 6,
     abbreviate: false,
+    minimumTwoDecimals: true,
   })
 }
 
@@ -203,9 +204,10 @@ export function formatGroupPrice(
 
   const price = priceInUSD / TOKEN_UNIT_DIVISORS[tokenUnit]
   return formatBillingCurrencyFromUSD(price, {
-    digitsLarge: 4,
+    digitsLarge: 2,
     digitsSmall: 6,
     abbreviate: false,
+    minimumTwoDecimals: true,
   })
 }
 
@@ -235,9 +237,10 @@ export function formatFixedPrice(
   )
 
   return formatBillingCurrencyFromUSD(priceInUSD, {
-    digitsLarge: 4,
+    digitsLarge: 2,
     digitsSmall: 4,
     abbreviate: false,
+    minimumTwoDecimals: true,
   })
 }
 
@@ -269,8 +272,9 @@ export function formatRequestPrice(
 
   return formatBillingCurrencyFromUSD(priceInUSD, {
     showSymbol: showCurrencySymbol,
-    digitsLarge: 4,
+    digitsLarge: 2,
     digitsSmall: 4,
     abbreviate: false,
+    minimumTwoDecimals: true,
   })
 }

@@ -546,7 +546,7 @@ it.each([
     name: 'legacy',
     effective: { ModelRatio: 1.5, CompletionRatio: 5, CacheRatio: 0.1 },
     catalog: { model_ratio: 1.5, completion_ratio: 5 },
-    text: 'Input3Output15',
+    text: 'Input3.00Output15.00',
   },
   {
     name: 'single-expression',
@@ -847,7 +847,7 @@ it.each([
       name: 'View pricing for channel-only',
     })
     expect(button.textContent?.replaceAll(/\s/g, '')).toContain(
-      'Input0.5Output1'
+      'Input0.50Output1.00'
     )
     expect(within(button).getByText(caption)).toBeVisible()
     if (type === 'CUSTOM') {

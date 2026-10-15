@@ -7310,6 +7310,24 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Sell markup over the upstream cost floor (official price × group rate). 1 means selling at cost.": "Marge de vente au-dessus du plancher de coût amont (prix officiel × taux du groupe). 1 signifie une vente au prix coûtant.",
+    "Rename or exclude upstream groups. Leave the name empty to keep the upstream name. Leave markup empty to inherit the source markup.": "Renommez ou excluez des groupes amont. Laissez le nom vide pour conserver le nom amont. Laissez la marge vide pour hériter celle de la source.",
+    "Group markup factor": "Facteur de marge du groupe",
+    "Markup": "Marge",
+    "Below cost": "Sous le coût",
+    "Cost rate": "Taux de coût",
+    "Upstream cost in CNY per USD of the official price": "Coût amont en CNY par USD du prix officiel",
+    "1h cache write derived": "Écriture cache 1h dérivée",
+    "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "Le prix d'écriture du cache 1h est dérivé du prix 5m (×1,6), et non synchronisé depuis l'amont.",
+    "Price basis mismatch": "Base de prix incohérente",
+    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "Le prix de vente amont diffère du prix officiel ; le plancher de coût utilise le prix officiel.",
+    "Base price": "Prix de base",
+    "Official input price per 1M tokens": "Prix d'entrée officiel par 1M de tokens",
+    "Some groups would be priced below cost": "Certains groupes seraient tarifés en dessous du coût",
+    "Sell price = upstream cost × markup. The following groups use a markup below 1 and would not cover the upstream cost: {{groups}}": "Prix de vente = coût amont × marge. Les groupes suivants utilisent une marge inférieure à 1 et ne couvriraient pas le coût amont : {{groups}}",
+    "Apply below-cost pricing anyway": "Appliquer quand même la tarification sous le coût",
+    "I understand and want to apply below-cost pricing anyway": "Je comprends et je veux quand même appliquer une tarification inférieure au coût",
+    "Group markup factor must be greater than 0": "Le facteur de marge du groupe doit être supérieur à 0"
   }
 }

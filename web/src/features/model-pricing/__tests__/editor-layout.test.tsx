@@ -113,7 +113,7 @@ it.each(['none', 'standard', 'claude_ttl'] as const)(
     const billing = await screen.findByRole('region', {
       name: 'Current Billing',
     })
-    expect(within(billing).getByText('16')).toBeVisible()
+    expect(within(billing).getByText('16.00')).toBeVisible()
     expect(within(billing).queryByText('Image input')).not.toBeInTheDocument()
     const preview = screen.getByRole('complementary', { name: 'Preview' })
     expect(await within(preview).findByText('$16')).toBeVisible()

@@ -7310,6 +7310,24 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Sell markup over the upstream cost floor (official price × group rate). 1 means selling at cost.": "Sell markup over the upstream cost floor (official price × group rate). 1 means selling at cost.",
+    "Rename or exclude upstream groups. Leave the name empty to keep the upstream name. Leave markup empty to inherit the source markup.": "Rename or exclude upstream groups. Leave the name empty to keep the upstream name. Leave markup empty to inherit the source markup.",
+    "Group markup factor": "Group markup factor",
+    "Markup": "Markup",
+    "Below cost": "Below cost",
+    "Cost rate": "Cost rate",
+    "Upstream cost in CNY per USD of the official price": "Upstream cost in CNY per USD of the official price",
+    "1h cache write derived": "1h cache write derived",
+    "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.",
+    "Price basis mismatch": "Price basis mismatch",
+    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "The upstream sell price diverges from the official price; the cost floor uses the official price.",
+    "Base price": "Base price",
+    "Official input price per 1M tokens": "Official input price per 1M tokens",
+    "Some groups would be priced below cost": "Some groups would be priced below cost",
+    "Sell price = upstream cost × markup. The following groups use a markup below 1 and would not cover the upstream cost: {{groups}}": "Sell price = upstream cost × markup. The following groups use a markup below 1 and would not cover the upstream cost: {{groups}}",
+    "Apply below-cost pricing anyway": "Apply below-cost pricing anyway",
+    "I understand and want to apply below-cost pricing anyway": "I understand and want to apply below-cost pricing anyway",
+    "Group markup factor must be greater than 0": "Group markup factor must be greater than 0"
   }
 }

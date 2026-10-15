@@ -7310,6 +7310,24 @@
     "Zhipu": "智譜",
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Sell markup over the upstream cost floor (official price × group rate). 1 means selling at cost.": "在上游成本底線（官方價 × 分組費率）之上的售價加成。1 表示按成本平賣。",
+    "Rename or exclude upstream groups. Leave the name empty to keep the upstream name. Leave markup empty to inherit the source markup.": "重新命名或排除上游分組。名稱留空表示沿用上游名稱，加成留空表示繼承同步來源的加成。",
+    "Group markup factor": "分組加成係數",
+    "Markup": "加成",
+    "Below cost": "低於成本",
+    "Cost rate": "成本費率",
+    "Upstream cost in CNY per USD of the official price": "上游成本，按官方價每美元折合人民幣計",
+    "1h cache write derived": "1h 快取寫入為派生值",
+    "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "1h 快取寫入價格由 5m 價格派生（×1.6），並非從上游同步。",
+    "Price basis mismatch": "價格基準不一致",
+    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "上游售價與官方價存在偏差，成本底線按官方價計算。",
+    "Base price": "基準價格",
+    "Official input price per 1M tokens": "每 1M tokens 的官方輸入價格",
+    "Some groups would be priced below cost": "部分分組的售價將低於成本",
+    "Sell price = upstream cost × markup. The following groups use a markup below 1 and would not cover the upstream cost: {{groups}}": "售價 = 上游成本 × 加成。以下分組的加成低於 1，將無法覆蓋上游成本：{{groups}}",
+    "Apply below-cost pricing anyway": "仍然套用低於成本的定價",
+    "I understand and want to apply below-cost pricing anyway": "我已知曉風險，仍要套用低於成本的定價",
+    "Group markup factor must be greater than 0": "分組加成係數必須大於 0"
   }
 }

@@ -59,3 +59,19 @@ export function formatPricingNumber(value: unknown): string {
   const normalized = snapFloatDrift(num)
   return Number.parseFloat(normalized.toFixed(DISPLAY_DECIMALS)).toString()
 }
+
+/**
+ * Format a price with two decimals like the upstream plaza (e.g. 3 -> "3.00",
+ * 0.149 -> "0.15"). Values below 0.01 keep up to 6 decimals so they never
+ * display as "0.00".
+ */
+export function formatPricingNumber2dp(value: unknown): string {
+  const num = toNumberOrNull(value)
+  if (num === null) return ''
+
+  const normalized = snapFloatDrift(num)
+  if (normalized !== 0 && Math.abs(normalized) < 0.01) {
+    return Number.parseFloat(normalized.toFixed(6)).toString()
+  }
+  return normalized.toFixed(2)
+}

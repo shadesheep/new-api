@@ -25,7 +25,10 @@ import {
 } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
 
-import { formatPricingNumber } from '../models/pricing-format'
+import {
+  formatPricingNumber,
+  formatPricingNumber2dp,
+} from '../models/pricing-format'
 import type {
   PriceSyncGroupPlan,
   PriceSyncModelPlan,
@@ -88,11 +91,37 @@ export function PriceSyncGroupTable({
             {!row.created && row.changed && (
               <Badge variant='outline'>{t('Changed')}</Badge>
             )}
+            {row.enabled && row.below_cost && (
+              <Badge variant='destructive'>{t('Below cost')}</Badge>
+            )}
           </div>
           <span className='text-muted-foreground text-xs'>
             {row.remote_name} · #{row.remote_id}
           </span>
         </div>
+      ),
+    },
+    {
+      id: 'cost_rate',
+      header: t('Cost rate'),
+      cell: (row) => (
+        <span
+          className='font-mono text-xs'
+          title={t('Upstream cost in CNY per USD of the official price')}
+        >
+          {formatPricingNumber(row.cost_rate)}
+        </span>
+      ),
+    },
+    {
+      id: 'markup',
+      header: t('Markup'),
+      cell: (row) => (
+        <span
+          className={`font-mono text-xs${row.enabled && row.below_cost ? ' text-destructive' : ''}`}
+        >
+          ×{formatPricingNumber(row.markup)}
+        </span>
       ),
     },
     {
@@ -132,7 +161,50 @@ export function PriceSyncModelTable({
     {
       id: 'model',
       header: t('Model'),
-      cell: (row) => <span className='font-medium'>{row.name}</span>,
+      cell: (row) => (
+        <div className='flex flex-col gap-1'>
+          <span className='font-medium'>{row.name}</span>
+          {(row.cache_1h_derived || row.price_basis_mismatch) && (
+            <div className='flex flex-wrap gap-1'>
+              {row.cache_1h_derived && (
+                <Badge
+                  variant='outline'
+                  title={t(
+                    'The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.'
+                  )}
+                >
+                  {t('1h cache write derived')}
+                </Badge>
+              )}
+              {row.price_basis_mismatch && (
+                <Badge
+                  variant='warning'
+                  title={t(
+                    'The upstream sell price diverges from the official price; the cost floor uses the official price.'
+                  )}
+                >
+                  {t('Price basis mismatch')}
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: 'base_price',
+      header: t('Base price'),
+      cell: (row) =>
+        row.base_price_usd_per_1m == null ? (
+          <span className='text-muted-foreground text-xs'>{t('Not set')}</span>
+        ) : (
+          <span
+            className='font-mono text-xs'
+            title={t('Official input price per 1M tokens')}
+          >
+            ${formatPricingNumber2dp(row.base_price_usd_per_1m)} / 1M
+          </span>
+        ),
     },
     {
       id: 'changes',

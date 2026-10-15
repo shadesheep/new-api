@@ -19,6 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 export type PriceSyncGroupOverride = {
   name?: string
   enabled?: boolean
+  // Optional per-group sell markup over the cost floor; null/omitted inherits
+  // the source-level markup factor.
+  markup_factor?: number | null
 }
 
 export type PriceSyncKnownGroup = {
@@ -47,6 +50,11 @@ export type PriceSyncGroupPlan = {
   local_name: string
   enabled: boolean
   rate_multiplier: number
+  // Upstream cost rate (CNY per USD of official price) — the sell floor.
+  cost_rate: number
+  // Sell markup over the cost floor; 1 means selling at cost.
+  markup: number
+  below_cost?: boolean
   old_ratio: number | null
   new_ratio: number
   changed: boolean
@@ -61,6 +69,12 @@ export type PriceSyncFieldChange = {
 export type PriceSyncModelPlan = {
   name: string
   fields: Record<string, PriceSyncFieldChange>
+  // Official base price in USD per 1M tokens (after conversion factor).
+  base_price_usd_per_1m?: number
+  // True when the 1h cache write price is derived (5m x 1.6), not synced.
+  cache_1h_derived?: boolean
+  // True when the upstream sell price diverges from the official price basis.
+  price_basis_mismatch?: boolean
 }
 
 export type PriceSyncSkippedModel = {
@@ -79,6 +93,8 @@ export type PriceSyncSummary = {
 export type PriceSyncPreviewData = {
   source: PriceSyncSource
   digest: string
+  // USD -> site display currency rate used when computing group ratios.
+  site_rate: number
   groups: PriceSyncGroupPlan[]
   models: PriceSyncModelPlan[]
   skipped: PriceSyncSkippedModel[]

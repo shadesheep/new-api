@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -70,17 +71,22 @@ var priceSyncApplyMutex sync.Mutex
 type priceSyncGroupOverride struct {
 	Name    string `json:"name,omitempty"`
 	Enabled *bool  `json:"enabled,omitempty"`
+	// MarkupFactor optionally overrides the source-level markup for this group.
+	// Markup is defined against the cost floor: 1 means selling at cost.
+	MarkupFactor *float64 `json:"markup_factor,omitempty"`
 }
 
 type priceSyncSource struct {
-	ID               string                            `json:"id"`
-	Name             string                            `json:"name"`
-	URL              string                            `json:"url"`
-	Token            string                            `json:"token,omitempty"`
-	ConversionFactor float64                           `json:"conversion_factor"`
-	MarkupFactor     float64                           `json:"markup_factor"`
-	Enabled          *bool                             `json:"enabled,omitempty"`
-	Groups           map[string]priceSyncGroupOverride `json:"groups,omitempty"`
+	ID               string  `json:"id"`
+	Name             string  `json:"name"`
+	URL              string  `json:"url"`
+	Token            string  `json:"token,omitempty"`
+	ConversionFactor float64 `json:"conversion_factor"`
+	// MarkupFactor is the sell markup over the cost floor (official price x
+	// rate_multiplier); 1 means selling at cost.
+	MarkupFactor float64                           `json:"markup_factor"`
+	Enabled      *bool                             `json:"enabled,omitempty"`
+	Groups       map[string]priceSyncGroupOverride `json:"groups,omitempty"`
 }
 
 func (s priceSyncSource) isEnabled() bool {
@@ -103,6 +109,10 @@ type priceSyncPlazaGroup struct {
 type priceSyncPlazaModel struct {
 	Name    string                `json:"name"`
 	Pricing priceSyncPlazaPricing `json:"pricing"`
+	// OfficialPricing is the plaza's official list price, when provided. It is
+	// only read to flag models whose synced pricing is denominated on a
+	// different basis (some plazas quote non-USD prices in the same fields).
+	OfficialPricing *priceSyncPlazaPricing `json:"official_pricing"`
 }
 
 type priceSyncPlazaPricing struct {
@@ -117,16 +127,23 @@ type priceSyncPlazaPricing struct {
 }
 
 type priceSyncGroupPlan struct {
-	RemoteID       int      `json:"remote_id"`
-	RemoteName     string   `json:"remote_name"`
-	Description    string   `json:"description,omitempty"`
-	LocalName      string   `json:"local_name"`
-	Enabled        bool     `json:"enabled"`
-	RateMultiplier float64  `json:"rate_multiplier"`
-	OldRatio       *float64 `json:"old_ratio"`
-	NewRatio       float64  `json:"new_ratio"`
-	Changed        bool     `json:"changed"`
-	Created        bool     `json:"created"`
+	RemoteID       int     `json:"remote_id"`
+	RemoteName     string  `json:"remote_name"`
+	Description    string  `json:"description,omitempty"`
+	LocalName      string  `json:"local_name"`
+	Enabled        bool    `json:"enabled"`
+	RateMultiplier float64 `json:"rate_multiplier"`
+	// CostRate is the upstream cost rate in CNY per USD (the "元/刀" meaning of
+	// rate_multiplier); Markup is the effective sell markup over the cost
+	// floor, and BelowCost flags a group whose synced ratio would sell under
+	// cost in the site's display currency.
+	CostRate  float64  `json:"cost_rate"`
+	Markup    float64  `json:"markup"`
+	BelowCost bool     `json:"below_cost,omitempty"`
+	OldRatio  *float64 `json:"old_ratio"`
+	NewRatio  float64  `json:"new_ratio"`
+	Changed   bool     `json:"changed"`
+	Created   bool     `json:"created"`
 }
 
 type priceSyncFieldChange struct {
@@ -137,6 +154,16 @@ type priceSyncFieldChange struct {
 type priceSyncModelPlan struct {
 	Name   string                          `json:"name"`
 	Fields map[string]priceSyncFieldChange `json:"fields"`
+	// BasePriceUSDPer1M is the synced pre-group base price (USD per 1M tokens)
+	// for token-billed models; the per-group sell price is this value times
+	// the group ratio and the site exchange rate.
+	BasePriceUSDPer1M *float64 `json:"base_price_usd_per_1m,omitempty"`
+	// Cache1hDerived marks models whose 1-hour cache write price is not synced
+	// but derived locally from the 5m ratio (relay/helper/price.go).
+	Cache1hDerived bool `json:"cache_1h_derived,omitempty"`
+	// PriceBasisMismatch flags models whose synced pricing differs from the
+	// plaza's official pricing, which usually means a non-USD price basis.
+	PriceBasisMismatch bool `json:"price_basis_mismatch,omitempty"`
 }
 
 type priceSyncSkippedModel struct {
@@ -154,6 +181,7 @@ type priceSyncSummary struct {
 
 type priceSyncPlan struct {
 	Digest     string                  `json:"digest"`
+	SiteRate   float64                 `json:"site_rate"`
 	Groups     []priceSyncGroupPlan    `json:"groups"`
 	Models     []priceSyncModelPlan    `json:"models"`
 	Skipped    []priceSyncSkippedModel `json:"skipped"`
@@ -219,12 +247,27 @@ func normalizePriceSyncSource(source *priceSyncSource) {
 			enabled := true
 			override.Enabled = &enabled
 		}
+		if override.MarkupFactor != nil && (*override.MarkupFactor <= 0 || !isFiniteFactor(*override.MarkupFactor)) {
+			override.MarkupFactor = nil
+		}
 		source.Groups[key] = override
 	}
 }
 
 func isFiniteFactor(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= priceSyncMaxFactor
+}
+
+// priceSyncSiteRate is the site's USD-to-display-currency rate. Group ratios
+// are divided by it so that the synced sell price equals cost x markup in the
+// displayed currency no matter what exchange rate the site shows. Falls back
+// to 1 when the configured rate is unusable.
+func priceSyncSiteRate() float64 {
+	rate := operation_setting.GetUsdToCurrencyRate(operation_setting.USDExchangeRate)
+	if rate <= 0 || !isFiniteFactor(rate) {
+		return 1
+	}
+	return rate
 }
 
 func loadPriceSyncSources() []priceSyncSource {
@@ -337,6 +380,12 @@ func UpdatePriceSyncSources(c *gin.Context) {
 		if source.MarkupFactor <= 0 || !isFiniteFactor(source.MarkupFactor) {
 			common.ApiErrorT(c, "Markup factor must be greater than 0")
 			return
+		}
+		for _, override := range source.Groups {
+			if override.MarkupFactor != nil && (*override.MarkupFactor <= 0 || !isFiniteFactor(*override.MarkupFactor)) {
+				common.ApiErrorT(c, "Group markup factor must be greater than 0")
+				return
+			}
 		}
 		normalizePriceSyncSource(source)
 		if source.ID == "" {
@@ -526,8 +575,25 @@ func priceSyncRatioMaps() map[string]map[string]float64 {
 }
 
 type priceSyncModelCandidate struct {
-	fields map[string]float64
-	reason string
+	fields         map[string]float64
+	reason         string
+	basePrice      float64
+	basisMismatch  bool
+	cache1hDerived bool
+}
+
+// priceSyncBasisMismatch reports whether the synced pricing and the plaza's
+// official pricing disagree on the input price by more than 1%, which is how
+// a non-USD price basis (or stale official data) shows up.
+func priceSyncBasisMismatch(pricing priceSyncPlazaPricing, official *priceSyncPlazaPricing) bool {
+	if official == nil || pricing.InputPrice == nil || official.InputPrice == nil {
+		return false
+	}
+	officialInput := *official.InputPrice
+	if officialInput <= 0 {
+		return false
+	}
+	return math.Abs(*pricing.InputPrice-officialInput)/officialInput > 0.01
 }
 
 // buildPriceSyncPlan is the pure core of preview and apply: given the source
@@ -536,6 +602,7 @@ type priceSyncModelCandidate struct {
 // over everything that was displayed.
 func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (priceSyncPlan, error) {
 	plan := priceSyncPlan{
+		SiteRate:   priceSyncSiteRate(),
 		Groups:     make([]priceSyncGroupPlan, 0, len(groups)),
 		UsableAdds: map[string]string{},
 	}
@@ -557,7 +624,11 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 		if !validSyncMultiplier(group.RateMultiplier) {
 			continue
 		}
-		newRatio := roundRatioValue(group.RateMultiplier * source.MarkupFactor)
+		markup := source.MarkupFactor
+		if override.MarkupFactor != nil {
+			markup = *override.MarkupFactor
+		}
+		newRatio := roundRatioValue(group.RateMultiplier * markup / plan.SiteRate)
 		if !validSyncMultiplier(newRatio) {
 			continue
 		}
@@ -568,8 +639,15 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 			LocalName:      localName,
 			Enabled:        enabled,
 			RateMultiplier: group.RateMultiplier,
+			CostRate:       group.RateMultiplier,
+			Markup:         markup,
 			NewRatio:       newRatio,
 		}
+		// Below cost means the synced sell ratio converts back to less than the
+		// upstream cost rate in the display currency. nearlyEqual absorbs the
+		// 6-decimal rounding of newRatio.
+		sellRate := newRatio * plan.SiteRate
+		entry.BelowCost = sellRate < group.RateMultiplier && !nearlyEqual(sellRate, group.RateMultiplier)
 		if old, exists := groupRatioLocal[localName]; exists {
 			value := old
 			entry.OldRatio = &value
@@ -614,7 +692,18 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 				continue
 			}
 			fields, reason := convertPriceSyncPricing(model.Pricing, source.ConversionFactor)
-			candidates[name] = append(candidates[name], priceSyncModelCandidate{fields: fields, reason: reason})
+			candidate := priceSyncModelCandidate{
+				fields:        fields,
+				reason:        reason,
+				basisMismatch: priceSyncBasisMismatch(model.Pricing, model.OfficialPricing),
+			}
+			if reason == "" {
+				if model.Pricing.InputPrice != nil {
+					candidate.basePrice = *model.Pricing.InputPrice * 1e6 * source.ConversionFactor
+				}
+				_, candidate.cache1hDerived = fields["create_cache_ratio"]
+			}
+			candidates[name] = append(candidates[name], candidate)
 		}
 	}
 
@@ -622,11 +711,11 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 	names := slices.Sorted(maps.Keys(candidates))
 	for _, name := range names {
 		entries := candidates[name]
-		var valid []map[string]float64
+		var valid []priceSyncModelCandidate
 		reasons := map[string]struct{}{}
 		for _, entry := range entries {
 			if entry.reason == "" {
-				valid = append(valid, entry.fields)
+				valid = append(valid, entry)
 			} else {
 				reasons[entry.reason] = struct{}{}
 			}
@@ -637,7 +726,7 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 		}
 		conflict := false
 		for _, candidate := range valid[1:] {
-			if !samePriceSyncFields(valid[0], candidate) {
+			if !samePriceSyncFields(valid[0].fields, candidate.fields) {
 				conflict = true
 				break
 			}
@@ -647,7 +736,7 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 			continue
 		}
 		changes := map[string]priceSyncFieldChange{}
-		for field, value := range valid[0] {
+		for field, value := range valid[0].fields {
 			local := localRatioMaps[field]
 			old, exists := local[name]
 			if exists && nearlyEqual(old, value) {
@@ -660,11 +749,28 @@ func buildPriceSyncPlan(source priceSyncSource, groups []priceSyncPlazaGroup) (p
 			}
 			changes[field] = change
 		}
+		basisMismatch := false
+		for _, candidate := range valid {
+			if candidate.basisMismatch {
+				basisMismatch = true
+				break
+			}
+		}
 		if len(changes) == 0 {
 			plan.Summary.ModelsUnchanged++
 			continue
 		}
-		plan.Models = append(plan.Models, priceSyncModelPlan{Name: name, Fields: changes})
+		modelPlan := priceSyncModelPlan{
+			Name:               name,
+			Fields:             changes,
+			Cache1hDerived:     valid[0].cache1hDerived,
+			PriceBasisMismatch: basisMismatch,
+		}
+		if valid[0].basePrice > 0 {
+			basePrice := valid[0].basePrice
+			modelPlan.BasePriceUSDPer1M = &basePrice
+		}
+		plan.Models = append(plan.Models, modelPlan)
 		plan.Summary.ModelsUpdated++
 	}
 	plan.Summary.ModelsSkipped = len(plan.Skipped)
@@ -740,6 +846,7 @@ func PreviewPriceSync(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"source":              priceSyncSourceView{priceSyncSource: source},
 		"digest":              plan.Digest,
+		"site_rate":           plan.SiteRate,
 		"groups":              plan.Groups,
 		"models":              plan.Models,
 		"skipped":             plan.Skipped,
@@ -750,8 +857,9 @@ func PreviewPriceSync(c *gin.Context) {
 
 func ApplyPriceSync(c *gin.Context) {
 	var request struct {
-		SourceID string `json:"source_id"`
-		Digest   string `json:"digest"`
+		SourceID       string `json:"source_id"`
+		Digest         string `json:"digest"`
+		AllowBelowCost bool   `json:"allow_below_cost"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid request parameter format"))
@@ -781,6 +889,18 @@ func ApplyPriceSync(c *gin.Context) {
 	if plan.Digest != request.Digest {
 		common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("Source data changed, please preview again"))
 		return
+	}
+	if !request.AllowBelowCost {
+		var belowCostGroups []string
+		for _, group := range plan.Groups {
+			if group.Enabled && group.BelowCost {
+				belowCostGroups = append(belowCostGroups, group.LocalName)
+			}
+		}
+		if len(belowCostGroups) > 0 {
+			common.ApiErrorStatus(c, http.StatusConflict, common.NewMessage("Some groups would be priced below cost"), gin.H{"below_cost_groups": belowCostGroups})
+			return
+		}
 	}
 	if err := applyPriceSyncPlan(plan); err != nil {
 		common.SysError(common.LogText("failed to apply price sync: %s", err.Error()))
@@ -815,10 +935,11 @@ func ApplyPriceSync(c *gin.Context) {
 		}
 	}
 	recordManageAudit(c, "price_sync.apply", map[string]any{
-		"source":         source.ID,
-		"groups_created": plan.Summary.GroupsCreated,
-		"groups_updated": plan.Summary.GroupsUpdated,
-		"models_updated": plan.Summary.ModelsUpdated,
+		"source":           source.ID,
+		"groups_created":   plan.Summary.GroupsCreated,
+		"groups_updated":   plan.Summary.GroupsUpdated,
+		"models_updated":   plan.Summary.ModelsUpdated,
+		"below_cost_allow": request.AllowBelowCost,
 	})
 	common.ApiSuccess(c, gin.H{
 		"applied":     applied,

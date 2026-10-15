@@ -53,6 +53,9 @@ export function PriceSyncSourceDialog({
   const [groupOverrides, setGroupOverrides] = useState<
     Record<string, PriceSyncGroupOverride>
   >({})
+  // Raw text for per-group markup so "empty" can mean "inherit the source
+  // markup" (DraftNumberInput would coerce empty to 0, which is invalid).
+  const [markupDrafts, setMarkupDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!open) return
@@ -63,10 +66,25 @@ export function PriceSyncSourceDialog({
     setMarkupFactor(source?.markup_factor ?? 1)
     setEnabled(source?.enabled ?? true)
     setGroupOverrides(source?.groups ?? {})
+    const drafts: Record<string, string> = {}
+    for (const [remoteId, override] of Object.entries(source?.groups ?? {})) {
+      if (override.markup_factor != null) {
+        drafts[remoteId] = String(override.markup_factor)
+      }
+    }
+    setMarkupDrafts(drafts)
   }, [open, source])
 
   const knownGroups = source?.known_groups ?? []
-  const canSave = name.trim() !== '' && url.trim() !== '' && !isSaving
+  const markupDraftValues = Object.values(markupDrafts).filter(
+    (draft) => draft.trim() !== ''
+  )
+  const markupDraftsValid = markupDraftValues.every((draft) => {
+    const parsed = Number(draft)
+    return Number.isFinite(parsed) && parsed > 0
+  })
+  const canSave =
+    name.trim() !== '' && url.trim() !== '' && markupDraftsValid && !isSaving
 
   const updateOverride = (remoteId: number, patch: PriceSyncGroupOverride) => {
     setGroupOverrides((previous) => ({
@@ -89,6 +107,13 @@ export function PriceSyncSourceDialog({
       }
       if (override.enabled === false) {
         entry.enabled = false
+      }
+      const markupDraft = markupDrafts[String(group.remote_id)]?.trim() ?? ''
+      if (markupDraft !== '') {
+        const parsed = Number(markupDraft)
+        if (Number.isFinite(parsed) && parsed > 0) {
+          entry.markup_factor = parsed
+        }
       }
       if (Object.keys(entry).length > 0) {
         groups[String(group.remote_id)] = entry
@@ -189,7 +214,9 @@ export function PriceSyncSourceDialog({
             className='h-8'
           />
           <FieldDescription>
-            {t('Multiplies the synced group ratio. 1 means no markup.')}
+            {t(
+              'Sell markup over the upstream cost floor (official price × group rate). 1 means selling at cost.'
+            )}
           </FieldDescription>
         </Field>
       </div>
@@ -208,13 +235,19 @@ export function PriceSyncSourceDialog({
             <div className='text-sm font-medium'>{t('Group mapping')}</div>
             <div className='text-muted-foreground text-xs'>
               {t(
-                'Rename or exclude upstream groups. Leave the name empty to keep the upstream name.'
+                'Rename or exclude upstream groups. Leave the name empty to keep the upstream name. Leave markup empty to inherit the source markup.'
               )}
             </div>
           </div>
           <div className='flex max-h-64 flex-col gap-2 overflow-y-auto'>
             {knownGroups.map((group) => {
               const override = groupOverrides[String(group.remote_id)] ?? {}
+              const markupDraft =
+                markupDrafts[String(group.remote_id)] ?? ''
+              const markupInvalid =
+                markupDraft.trim() !== '' &&
+                (!Number.isFinite(Number(markupDraft)) ||
+                  Number(markupDraft) <= 0)
               return (
                 <div
                   key={group.remote_id}
@@ -240,6 +273,25 @@ export function PriceSyncSourceDialog({
                       className='mt-2 h-8'
                       aria-label={t('Local group name')}
                     />
+                  </div>
+                  <div className='w-24 shrink-0'>
+                    <Input
+                      type='number'
+                      value={markupDraft}
+                      onChange={(event) =>
+                        setMarkupDrafts((previous) => ({
+                          ...previous,
+                          [String(group.remote_id)]: event.target.value,
+                        }))
+                      }
+                      placeholder={String(markupFactor)}
+                      className={`h-8${markupInvalid ? ' border-destructive' : ''}`}
+                      aria-label={t('Group markup factor')}
+                      title={t('Group markup factor')}
+                    />
+                    <div className='text-muted-foreground mt-1 text-center text-xs'>
+                      {t('Markup')}
+                    </div>
                   </div>
                   <Switch
                     checked={override.enabled !== false}

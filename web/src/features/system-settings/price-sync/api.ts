@@ -49,10 +49,15 @@ export async function previewPriceSync(sourceId: string) {
   return res.data
 }
 
-export async function applyPriceSync(sourceId: string, digest: string) {
+export async function applyPriceSync(
+  sourceId: string,
+  digest: string,
+  allowBelowCost = false
+) {
   const res = await api.post<PriceSyncApplyResponse>('/api/price_sync/apply', {
     source_id: sourceId,
     digest,
+    allow_below_cost: allowBelowCost,
   })
   return res.data
 }

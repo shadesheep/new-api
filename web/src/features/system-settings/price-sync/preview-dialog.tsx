@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -26,6 +27,7 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { invalidateModelPricing } from '@/features/model-pricing/api'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -60,11 +62,17 @@ export function PriceSyncPreviewDialog({
     retry: false,
   })
   const preview = previewQuery.data?.data
+  const [allowBelowCost, setAllowBelowCost] = useState(false)
+  const digest = preview?.digest
+  // Reset the explicit below-cost consent whenever a new plan is built.
+  useEffect(() => {
+    setAllowBelowCost(false)
+  }, [digest, sourceId])
   const applyMutation = useMutation({
     mutationFn: async () => {
       if (!preview) throw new Error(t('Preview is not ready'))
       return requireServerSuccess(
-        await applyPriceSync(sourceId, preview.digest)
+        await applyPriceSync(sourceId, preview.digest, allowBelowCost)
       )
     },
     onSuccess: async (response) => {
@@ -83,7 +91,14 @@ export function PriceSyncPreviewDialog({
     onError: (error: Error) => {
       handleServerError(error, t('Failed to sync prices'))
       if (isAxiosError(error) && error.response?.status === 409) {
-        void previewQuery.refetch()
+        // A below-cost rejection keeps the plan valid — only refetch when the
+        // digest went stale (no below_cost_groups marker on the response).
+        const belowCost = (
+          error.response.data as { below_cost_groups?: string[] } | undefined
+        )?.below_cost_groups
+        if (!belowCost || belowCost.length === 0) {
+          void previewQuery.refetch()
+        }
       }
     },
   })
@@ -94,6 +109,9 @@ export function PriceSyncPreviewDialog({
     (summary.groups_created + summary.groups_updated + summary.models_updated >
       0 ||
       (preview?.usable_groups_added.length ?? 0) > 0)
+  const belowCostGroups =
+    preview?.groups.filter((group) => group.enabled && group.below_cost) ?? []
+  const hasBelowCost = belowCostGroups.length > 0
 
   let content
   if (previewQuery.isLoading) {
@@ -146,6 +164,32 @@ export function PriceSyncPreviewDialog({
           <p className='text-muted-foreground text-sm' role='status'>
             {t('Local prices already match this source.')}
           </p>
+        )}
+        {hasBelowCost && (
+          <div
+            role='alert'
+            className='border-destructive/40 bg-destructive/10 flex flex-col gap-2 rounded-md border p-3'
+          >
+            <p className='text-destructive text-sm font-medium'>
+              {t('Some groups would be priced below cost')}
+            </p>
+            <p className='text-destructive/90 text-xs'>
+              {t(
+                'Sell price = upstream cost × markup. The following groups use a markup below 1 and would not cover the upstream cost: {{groups}}',
+                { groups: belowCostGroups.map((group) => group.local_name).join(', ') }
+              )}
+            </p>
+            <label className='flex items-center gap-2 text-sm'>
+              <Checkbox
+                checked={allowBelowCost}
+                onCheckedChange={(checked) =>
+                  setAllowBelowCost(checked === true)
+                }
+                aria-label={t('Apply below-cost pricing anyway')}
+              />
+              {t('I understand and want to apply below-cost pricing anyway')}
+            </label>
+          </div>
         )}
         {preview.groups.length > 0 && (
           <div className='flex flex-col gap-2'>
@@ -204,7 +248,12 @@ export function PriceSyncPreviewDialog({
             {t('Cancel')}
           </Button>
           <Button
-            disabled={!preview || !hasChanges || applyMutation.isPending}
+            disabled={
+              !preview ||
+              !hasChanges ||
+              (hasBelowCost && !allowBelowCost) ||
+              applyMutation.isPending
+            }
             onClick={() => applyMutation.mutate()}
           >
             {applyMutation.isPending ? t('Applying...') : t('Apply price sync')}

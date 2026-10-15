@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -182,6 +183,89 @@ func TestBuildPriceSyncPlanConversion(t *testing.T) {
 	assert.Equal(t, plan.Digest, repeated.Digest)
 }
 
+// The cost floor is group-level: sell = official price x cost rate x markup in
+// the display currency, so a group is below cost exactly when its effective
+// markup rounds below its cost rate. Group markup overrides beat the source
+// markup, and the group ratio is divided by the site exchange rate so the
+// invariant survives non-1 USD:CNY displays.
+func TestBuildPriceSyncPlanCostFloor(t *testing.T) {
+	source := priceSyncSource{
+		ID:               "test",
+		Name:             "test",
+		URL:              "http://example.invalid/model-plaza",
+		ConversionFactor: 1,
+		MarkupFactor:     1.2,
+		Groups: map[string]priceSyncGroupOverride{
+			"5": {MarkupFactor: syncTestFloatPtr(0.5)},
+		},
+	}
+	matched := syncTestPricing(4e-6, 2e-5, 2e-7, 5e-6)
+	officialMatched := syncTestPricing(4e-6, 2e-5, 2e-7, 5e-6)
+	officialMismatch := syncTestPricing(4e-7, 2e-6, 2e-8, 5e-7)
+	groups := []priceSyncPlazaGroup{
+		{ID: 31, Name: "floor-a", RateMultiplier: 0.75, Models: []priceSyncPlazaModel{
+			{Name: "floor-matched", Pricing: matched, OfficialPricing: &officialMatched},
+			{Name: "floor-mismatch", Pricing: matched, OfficialPricing: &officialMismatch},
+			{Name: "floor-nocache", Pricing: priceSyncPlazaPricing{BillingMode: "token", InputPrice: syncTestFloatPtr(4e-6)}},
+		}},
+		{ID: 5, Name: "floor-b", RateMultiplier: 1.75, Models: []priceSyncPlazaModel{
+			{Name: "floor-b-only", Pricing: syncTestPricing(1e-5, 1e-5, 0, 0)},
+		}},
+	}
+
+	plan, err := buildPriceSyncPlan(source, groups)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, plan.SiteRate, 1e-9, "default USD display means site rate 1")
+
+	byID := map[int]priceSyncGroupPlan{}
+	for _, group := range plan.Groups {
+		byID[group.RemoteID] = group
+	}
+	groupA := byID[31]
+	assert.InDelta(t, 0.75, groupA.CostRate, 1e-9)
+	assert.InDelta(t, 1.2, groupA.Markup, 1e-9)
+	assert.InDelta(t, 0.9, groupA.NewRatio, 1e-9)
+	assert.False(t, groupA.BelowCost)
+	groupB := byID[5]
+	assert.InDelta(t, 0.5, groupB.Markup, 1e-9, "group markup override must beat the source markup")
+	assert.InDelta(t, 0.875, groupB.NewRatio, 1e-9)
+	assert.True(t, groupB.BelowCost, "markup 0.5 sells under the 1.75 cost rate")
+
+	models := map[string]priceSyncModelPlan{}
+	for _, model := range plan.Models {
+		models[model.Name] = model
+	}
+	matchedModel := models["floor-matched"]
+	require.NotNil(t, matchedModel.BasePriceUSDPer1M)
+	assert.InDelta(t, 4, *matchedModel.BasePriceUSDPer1M, 1e-9)
+	assert.True(t, matchedModel.Cache1hDerived, "synced 5m cache write implies a derived 1h price")
+	assert.False(t, matchedModel.PriceBasisMismatch)
+	assert.True(t, models["floor-mismatch"].PriceBasisMismatch)
+	assert.False(t, models["floor-nocache"].Cache1hDerived)
+
+	// With a CNY display at 7.3 the ratio is divided by the site rate so the
+	// sell price still equals cost x markup in yuan.
+	previousRate := operation_setting.USDExchangeRate
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousRate })
+	operation_setting.USDExchangeRate = 7.3
+	previousDisplay := config.GlobalConfig.Get("general_setting").(*operation_setting.GeneralSetting).QuotaDisplayType
+	t.Cleanup(func() {
+		config.UpdateConfigFromMap(config.GlobalConfig.Get("general_setting"), map[string]string{"quota_display_type": previousDisplay})
+	})
+	config.UpdateConfigFromMap(config.GlobalConfig.Get("general_setting"), map[string]string{"quota_display_type": operation_setting.QuotaDisplayTypeCNY})
+
+	cnyPlan, err := buildPriceSyncPlan(source, groups)
+	require.NoError(t, err)
+	assert.InDelta(t, 7.3, cnyPlan.SiteRate, 1e-9)
+	for _, group := range cnyPlan.Groups {
+		sellRate := group.NewRatio * cnyPlan.SiteRate
+		// 6-decimal ratio rounding scaled by the site rate bounds the error.
+		assert.InDelta(t, group.CostRate*group.Markup, sellRate, 1e-4, "sell = cost x markup must hold in CNY")
+		assert.Equal(t, group.RemoteID == 5, group.BelowCost)
+	}
+	assert.NotEqual(t, plan.Digest, cnyPlan.Digest)
+}
+
 const priceSyncTestPlazaJSON = `{"code":0,"message":"success","data":{"groups":[
 	{"id":31,"name":"sync-test-a","description":"Group A","rate_multiplier":0.45,"models":[
 		{"name":"sync-test-k3","pricing":{"billing_mode":"token","input_price":2e-5,"output_price":1e-4,"cache_write_price":2e-5,"cache_read_price":2e-6,"image_input_price":null,"per_request_price":null,"intervals":[]}},
@@ -248,6 +332,14 @@ func TestPriceSyncSourceValidation(t *testing.T) {
 		"sources": []map[string]any{{"id": "bad", "name": "bad", "url": "http://example.com", "conversion_factor": 0, "markup_factor": 1}},
 	}, &errorResponse)
 	assert.Equal(t, "Conversion factor must be greater than 0", errorResponse.Message)
+
+	modelManagementRequest(t, UpdatePriceSyncSources, http.MethodPut, "/api/price_sync/sources", map[string]any{
+		"sources": []map[string]any{{
+			"id": "bad", "name": "bad", "url": "http://example.com", "conversion_factor": 1, "markup_factor": 1,
+			"groups": map[string]any{"5": map[string]any{"markup_factor": 0}},
+		}},
+	}, &errorResponse)
+	assert.Equal(t, "Group markup factor must be greater than 0", errorResponse.Message)
 
 	modelManagementRequest(t, UpdatePriceSyncSources, http.MethodPut, "/api/price_sync/sources", map[string]any{
 		"sources": []map[string]any{
@@ -369,4 +461,62 @@ func TestPriceSyncPreviewApplyAndSnapshots(t *testing.T) {
 	// Unknown source id is rejected cleanly.
 	modelManagementRequest(t, PreviewPriceSync, http.MethodPost, "/api/price_sync/preview", map[string]any{"source_id": "nope"}, &errorResponse)
 	assert.Equal(t, "Sync source not found", errorResponse.Message)
+}
+
+// An apply that would price an enabled group below its cost floor is rejected
+// with 409 until the caller explicitly confirms with allow_below_cost.
+func TestPriceSyncApplyBelowCost(t *testing.T) {
+	modelManagementDB(t, "sqlite", "")
+
+	// Distinct group names: ratio maps are process-global across tests.
+	const belowCostPlazaJSON = `{"code":0,"message":"success","data":{"groups":[
+		{"id":41,"name":"bc-test-a","description":"BC A","rate_multiplier":0.45,"models":[
+			{"name":"bc-test-m","pricing":{"billing_mode":"token","input_price":2e-5,"output_price":1e-4,"cache_write_price":2e-5,"cache_read_price":2e-6,"intervals":[]}}
+		]},
+		{"id":42,"name":"bc-test-b","description":"BC B","rate_multiplier":1.75,"models":[]}
+	]}}`
+	plaza := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(belowCostPlazaJSON))
+	}))
+	t.Cleanup(plaza.Close)
+
+	var saveResponse priceSyncTestSourcesResponse
+	modelManagementRequest(t, UpdatePriceSyncSources, http.MethodPut, "/api/price_sync/sources", map[string]any{
+		"sources": []map[string]any{{"id": "test-src", "name": "test", "url": plaza.URL, "conversion_factor": 1, "markup_factor": 0.5}},
+	}, &saveResponse)
+	require.True(t, saveResponse.Success)
+
+	var preview priceSyncTestPreviewResponse
+	modelManagementRequest(t, PreviewPriceSync, http.MethodPost, "/api/price_sync/preview", map[string]any{"source_id": "test-src"}, &preview)
+	require.True(t, preview.Success)
+	require.Len(t, preview.Data.Groups, 2)
+	for _, group := range preview.Data.Groups {
+		assert.True(t, group.BelowCost, "markup 0.5 must flag every group as below cost")
+		assert.InDelta(t, 0.5, group.Markup, 1e-9)
+		assert.InDelta(t, group.RateMultiplier, group.CostRate, 1e-9)
+	}
+
+	var errorResponse struct {
+		Success         bool     `json:"success"`
+		Message         string   `json:"message"`
+		BelowCostGroups []string `json:"below_cost_groups"`
+	}
+	recorder := modelManagementRequest(t, ApplyPriceSync, http.MethodPost, "/api/price_sync/apply", map[string]any{
+		"source_id": "test-src", "digest": preview.Data.Digest,
+	}, &errorResponse)
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Equal(t, "Some groups would be priced below cost", errorResponse.Message)
+	assert.ElementsMatch(t, []string{"bc-test-a", "bc-test-b"}, errorResponse.BelowCostGroups)
+	_, written := ratio_setting.GetGroupRatioCopy()["bc-test-a"]
+	assert.False(t, written, "a rejected apply must not write group ratios")
+
+	var applyResponse priceSyncTestApplyResponse
+	modelManagementRequest(t, ApplyPriceSync, http.MethodPost, "/api/price_sync/apply", map[string]any{
+		"source_id": "test-src", "digest": preview.Data.Digest, "allow_below_cost": true,
+	}, &applyResponse)
+	require.True(t, applyResponse.Success)
+	assert.True(t, applyResponse.Data.Applied)
+	assert.InDelta(t, 0.225, ratio_setting.GetGroupRatioCopy()["bc-test-a"], 1e-9)
+	assert.InDelta(t, 0.875, ratio_setting.GetGroupRatioCopy()["bc-test-b"], 1e-9)
 }

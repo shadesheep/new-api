@@ -7310,6 +7310,24 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Sell markup over the upstream cost floor (official price × group rate). 1 means selling at cost.": "Hệ số lợi nhuận bán trên giá vốn tối thiểu từ nguồn (giá chính thức × tỷ lệ nhóm). 1 nghĩa là bán theo giá vốn.",
+    "Rename or exclude upstream groups. Leave the name empty to keep the upstream name. Leave markup empty to inherit the source markup.": "Đổi tên hoặc loại trừ các nhóm nguồn. Để trống tên để giữ tên nguồn. Để trống hệ số để kế thừa từ nguồn đồng bộ.",
+    "Group markup factor": "Hệ số lợi nhuận của nhóm",
+    "Markup": "Hệ số lợi nhuận",
+    "Below cost": "Dưới giá vốn",
+    "Cost rate": "Tỷ lệ giá vốn",
+    "Upstream cost in CNY per USD of the official price": "Chi phí nguồn tính bằng CNY trên mỗi USD của giá chính thức",
+    "1h cache write derived": "Giá ghi cache 1h là giá trị suy ra",
+    "The 1h cache write price is derived from the 5m price (×1.6), not synced from upstream.": "Giá ghi cache 1h được suy ra từ giá 5m (×1,6), không đồng bộ từ nguồn.",
+    "Price basis mismatch": "Không khớp cơ sở giá",
+    "The upstream sell price diverges from the official price; the cost floor uses the official price.": "Giá bán nguồn chênh lệch so với giá chính thức; giá vốn tối thiểu dùng giá chính thức.",
+    "Base price": "Giá cơ bản",
+    "Official input price per 1M tokens": "Giá đầu vào chính thức trên 1M token",
+    "Some groups would be priced below cost": "Một số nhóm sẽ được định giá dưới giá vốn",
+    "Sell price = upstream cost × markup. The following groups use a markup below 1 and would not cover the upstream cost: {{groups}}": "Giá bán = giá vốn nguồn × hệ số lợi nhuận. Các nhóm sau dùng hệ số dưới 1 và sẽ không bù được chi phí nguồn: {{groups}}",
+    "Apply below-cost pricing anyway": "Vẫn áp dụng giá dưới giá vốn",
+    "I understand and want to apply below-cost pricing anyway": "Tôi hiểu và vẫn muốn áp dụng giá thấp hơn giá vốn",
+    "Group markup factor must be greater than 0": "Hệ số lợi nhuận của nhóm phải lớn hơn 0"
   }
 }

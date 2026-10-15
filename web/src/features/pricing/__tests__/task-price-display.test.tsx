@@ -618,7 +618,7 @@ it('switches provider group prices, localized conditions and examples, and shows
   expect(within(panel).queryByRole('table')).not.toBeInTheDocument()
   await user.click(screen.getByRole('tab', { name: 'Delta' }))
   panel = screen.getByRole('tabpanel', { name: 'Delta' })
-  expect(within(panel).getByText('$0.5')).toBeVisible()
+  expect(within(panel).getByText('$0.50')).toBeVisible()
 })
 
 it('shows provider count, price range and missing-price status in both list and card views', () => {
